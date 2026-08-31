@@ -1,0 +1,74 @@
+[
+  {
+    "name": "ui-click",
+    "seconds": 1,
+    "prompt": "Single short dry wooden button tap, soft UI click, no reverb",
+    "event": "click"
+  },
+  {
+    "name": "ui-click-soft",
+    "seconds": 1,
+    "prompt": "Very short muted plastic key press, gentle rounded UI tick",
+    "event": "click"
+  },
+  {
+    "name": "ui-focus",
+    "seconds": 1,
+    "prompt": "Tiny soft sine blip, delicate hover tick like a fingertip on glass",
+    "event": "focus"
+  },
+  {
+    "name": "object-found",
+    "seconds": 1,
+    "prompt": "Bright two-note small brass bell ding with a light sparkle tail",
+    "event": "found"
+  },
+  {
+    "name": "object-found-chime",
+    "seconds": 2,
+    "prompt": "Warm glockenspiel two-note chime, cheerful discovery shimmer",
+    "event": "found"
+  },
+  {
+    "name": "wrong-pick",
+    "seconds": 1,
+    "prompt": "Low dull short buzz, muted descending error thud on wood",
+    "event": "invalid"
+  },
+  {
+    "name": "wave-clear",
+    "seconds": 2,
+    "prompt": "Rising three-note harp arpeggio with cheerful sparkling finish",
+    "event": "wave"
+  },
+  {
+    "name": "round-win",
+    "seconds": 3,
+    "prompt": "Warm four-note victory fanfare on marimba with shimmering sustain tail",
+    "event": "win"
+  },
+  {
+    "name": "round-lose",
+    "seconds": 2,
+    "prompt": "Soft descending three-note melancholy phrase on muted felt piano",
+    "event": "lose"
+  },
+  {
+    "name": "hint-reveal",
+    "seconds": 2,
+    "prompt": "Airy magical shimmer, light glockenspiel glissando like dust sparkling",
+    "event": "hint"
+  },
+  {
+    "name": "undo-step",
+    "seconds": 1,
+    "prompt": "Short reversed paper-slide swoosh, soft page flipping backward",
+    "event": "undo"
+  },
+  {
+    "name": "pause-tock",
+    "seconds": 1,
+    "prompt": "Single soft muted kalimba pluck, calm gentle pause tick",
+    "event": "pause"
+  }
+]

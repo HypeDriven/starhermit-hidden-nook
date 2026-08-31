@@ -1,0 +1,11 @@
+{
+  "name": "hidden-nook",
+  "version": "1.0.0",
+  "description": "Hidden Nook - observation puzzle browser game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "license": "MIT"
+}

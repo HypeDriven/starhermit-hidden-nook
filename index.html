@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="description" content="Hidden Nook — an observation puzzle. Find every requested object in a richly layered miniature room." />
+<title>Hidden Nook</title>
+<link rel="stylesheet" href="./style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231a2333'/%3E%3Ccircle cx='8' cy='8' r='5' fill='%23ffb84d'/%3E%3C/svg%3E" />
+</head>
+<body>
+<noscript><p class="hn-noscript">Hidden Nook requires JavaScript and WebGL.</p></noscript>
+
+<div id="hn-root" class="hn-shell">
+  <header class="hn-topbar" aria-label="Status bar">
+    <div class="hn-title-block">
+      <h1 class="hn-game-title">Hidden Nook</h1>
+      <span id="status-line" class="hn-status-line" role="status"></span>
+    </div>
+    <div id="hud-timer" class="hn-timer" aria-label="Time remaining" hidden>0:00</div>
+    <nav class="hn-top-actions" aria-label="Top actions">
+      <button type="button" id="btn-pause" class="hn-btn hn-btn-ghost" hidden>Pause</button>
+      <button type="button" id="btn-help" class="hn-btn hn-btn-ghost">Help</button>
+      <button type="button" id="btn-settings" class="hn-btn hn-btn-ghost">Settings</button>
+    </nav>
+  </header>
+
+  <main class="hn-main" aria-label="Game area">
+    <aside class="hn-rail hn-rail-left" id="rail-left" aria-label="Objective and progress">
+      <h2 class="rail-heading">Requests</h2>
+      <ul id="request-strip" class="hn-request-strip" aria-label="Objects to find"></ul>
+      <p class="rail-hint" id="objective-text">Pick a mode to begin.</p>
+      <div class="rail-progress">
+        <span id="hud-progress" class="rail-sub">0 found</span>
+        <div class="hn-progressbar" role="progressbar" aria-label="Round progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressbar"><div class="hn-progressbar-fill" id="progressbar-fill"></div></div>
+      </div>
+    </aside>
+
+    <section class="hn-playfield-wrap" aria-label="Playfield">
+      <div id="canvas-holder" class="hn-canvas-holder" tabindex="0" role="application"
+           aria-label="Miniature room scene. Use arrow keys to move between objects, Enter to select."></div>
+      <div id="overlay-root" class="hn-overlay-root" hidden></div>
+    </section>
+
+    <aside class="hn-rail hn-rail-right" id="rail-right" aria-label="Score and actions">
+      <div class="score-block">
+        <span id="hud-score" class="hn-score-value">0</span>
+        <span class="rail-sub" id="hud-score-sub">points</span>
+      </div>
+      <div class="hn-action-row" id="action-row" hidden>
+        <button type="button" id="btn-hint" class="hn-btn">Hint</button>
+        <button type="button" id="btn-undo" class="hn-btn" hidden>Undo</button>
+        <button type="button" id="btn-cam" class="hn-btn">Reset view</button>
+      </div>
+      <h3 class="rail-heading2">Scene objects</h3>
+      <ul id="sr-target-list" class="hn-target-list" aria-label="Navigable list of scene objects"></ul>
+    </aside>
+
+    <footer class="hn-bottombar" aria-label="Bottom action tray">
+      <div class="hn-tray" id="bottom-tray" hidden>
+        <button type="button" id="tray-hint" class="hn-btn">Hint</button>
+        <button type="button" id="tray-cam" class="hn-btn">Reset view</button>
+        <button type="button" id="tray-pause" class="hn-btn">Pause</button>
+      </div>
+    </footer>
+  </main>
+
+  <div id="live-region" class="hn-visually-hidden" aria-live="polite" role="status"></div>
+  <div id="live-assertive" class="hn-visually-hidden" aria-live="assertive" role="alert"></div>
+</div>
+
+<script src="./rules.js"></script>
+<script src="./content.js"></script>
+<script type="module" src="./game.js"></script>
+</body>
+</html>

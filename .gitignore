@@ -1,0 +1,7 @@
+data/
+node_modules/
+*.log
+.local-data/
+.DS_Store
+test-results/
+.tmp-build/
