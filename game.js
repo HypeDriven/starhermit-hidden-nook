@@ -337,7 +337,7 @@ class NookRenderer {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.35;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
