@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test.js"
+    "test": "node test.js",
+    "test:e2e": "node tests/e2e.mjs"
   },
-  "license": "MIT"
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
+  }
 }

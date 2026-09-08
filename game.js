@@ -707,6 +707,9 @@ class NookRenderer {
     const dest = v.group.position.clone();
     dest.y += 0.3;
     this._camAnim = { from: this.rig.target.clone(), to: dest, t: 0, dur: this.reduced ? 0.01 : 0.35 };
+    // focusing moves the camera; report it so keyboard-only players can
+    // satisfy the tutorial's look-around step without dragging
+    if (this.onCameraMove) this.onCameraMove();
   }
   stepCameraAnim(dt) {
     const a = this._camAnim;
@@ -722,14 +725,12 @@ class NookRenderer {
     const el = this.canvas;
     el.style.touchAction = 'none';
     let down = null; // {x,y,t,id,moved}
-    let pinch = null;
     el.addEventListener('pointerdown', (ev) => {
       el.setPointerCapture(ev.pointerId);
       down = { x: ev.clientX, y: ev.clientY, t: performance.now(), id: ev.pointerId, moved: false };
       Audio.ensure();
     });
     el.addEventListener('pointermove', (ev) => {
-      if (pinch && ev.pointerId !== pinch.ids[0] && ev.pointerId !== pinch.ids[1]) return;
       if (!down || ev.pointerId !== down.id) return;
       const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
       if (!down.moved && Math.hypot(dx, dy) > 8) down.moved = true;
@@ -747,11 +748,17 @@ class NookRenderer {
       if (wasTap && this.onTap) this.onTap(this.pick(x, y));
     };
     el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', () => { down = null; pinch = null; });
+    el.addEventListener('pointercancel', () => { down = null; });
     el.addEventListener('wheel', (ev) => { ev.preventDefault(); this.zoomBy(ev.deltaY > 0 ? 1.1 : 0.9); }, { passive: false });
     // pinch zoom
     const touches = new Map();
-    el.addEventListener('pointerdown', (ev) => { if (ev.pointerType === 'touch') touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY }); });
+    el.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType !== 'touch') return;
+      touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      // a second finger means pinch, not tap: cancel any pending tap so
+      // lifting fingers after a pinch never selects an object by accident
+      if (touches.size >= 2 && down) down.moved = true;
+    });
     el.addEventListener('pointermove', (ev) => {
       if (ev.pointerType !== 'touch' || !touches.has(ev.pointerId)) return;
       touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
@@ -1295,6 +1302,8 @@ const Game = {
             if (this.state.items[i].found) this.renderer.markFound(i);
             else this.renderer.markUnfound(i);
           }
+          // keep the hint glow in sync with the restored snapshot too
+          v.hinted = !!this.state.items[i].hinted && !v.found;
         }
       } else if (ev.type === 'terminal') {
         // handled by toResolving
@@ -1501,7 +1510,9 @@ const Game = {
 
   // ---- pause / settings / help ------------------------------------------------------
   pause() {
-    if (this.phase !== 'active') return;
+    // Re-entry while already paused re-renders the pause menu; this is how
+    // Settings/Help opened from the pause menu return to it via Done.
+    if (this.phase !== 'active' && this.phase !== 'paused') return;
     this.phase = 'paused';
     Audio.play('pause');
     const panel = UI.showOverlay(`
@@ -1673,9 +1684,9 @@ const Game = {
       this.pausedByBackground = true;
       this.pause();
       const pl = document.querySelector('.hn-overlay .hn-menu');
-      if (pl) {
+      if (pl && !pl.querySelector('.hn-auto-pause-note')) {
         const note = document.createElement('p');
-        note.className = 'rail-sub';
+        note.className = 'rail-sub hn-auto-pause-note';
         note.textContent = 'Paused automatically while the tab was hidden. The clock stopped — nothing happened while you were away.';
         pl.prepend(note);
       }
