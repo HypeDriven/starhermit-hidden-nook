@@ -16,3 +16,7 @@ Generated with MOSS-SoundEffect v2.0, 48 kHz mono Opus (96 kbps VBR, loudness-no
 | hint-reveal.opus | hint | Airy magical shimmer, light glockenspiel glissando like dust sparkling |
 | undo-step.opus | undo | Short reversed paper-slide swoosh, soft page flipping backward |
 | pause-tock.opus | pause | Single soft muted kalimba pluck, calm gentle pause tick |
+| countdown-tick.opus | countdown | Single soft hollow wooden metronome tick, dry close-mic, gentle countdown beat, no reverb |
+| achievement-unlock.opus | achieve | Bright rising three-note celeste triad with a soft golden shimmer tail, small reward stinger |
+| timer-warning.opus | timer-low | Soft urgent double tick on muted woodblock, quiet clock warning, slightly tense, dry |
+| ui-focus-alt.opus | focus | Very short breathy sine tick with a faint felt thud, delicate focus-move blip |

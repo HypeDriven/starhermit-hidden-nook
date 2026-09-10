@@ -1,0 +1,25 @@
+# Hidden Nook — canonical SFX manifest
+# format: file | event id | description of the sound | usage context
+# Event ids are the strings passed to Audio.play(name) in game.js. Several clips
+# may share an event id; Audio.play picks one from the seeded variant stream, so
+# repeated cues vary without breaking replay determinism. Every clip is a
+# 48 kHz mono Opus one-shot (96 kbps VBR, loudness-normalised, MOSS-SoundEffect
+# v2.0 at 100 inference steps). Each event also has an oscillator fallback in
+# Audio.play, so the game is fully audible before any clip finishes decoding.
+
+ui-click.opus          | click     | Single short dry wooden button tap, soft UI click, no reverb                       | Every overlay/menu button press: title, mode select, setup, pause, results, HUD reset-view.
+ui-click-soft.opus     | click     | Very short muted plastic key press, gentle rounded UI tick                          | Second click variant so consecutive menu presses do not machine-gun the same sample.
+ui-focus.opus          | focus     | Tiny soft sine blip, delicate hover tick like a fingertip on glass                 | Keyboard/gamepad focus moves between scene objects (cycleFocus); also each tutorial step advance.
+ui-focus-alt.opus      | focus     | Very short breathy sine tick with a faint felt thud, delicate focus-move blip      | Focus-move variant; keeps long arrow-key sweeps across a crowded shelf from sounding mechanical.
+object-found.opus      | found     | Bright two-note small brass bell ding with a light sparkle tail                    | A requested object is found (rules event `found`) — the game's core reward beat.
+object-found-chime.opus| found     | Warm glockenspiel two-note chime, cheerful discovery shimmer                       | Second find variant; alternation keeps a 16-object round from feeling repetitive.
+wrong-pick.opus        | invalid   | Low dull short buzz, muted descending error thud on wood                           | Tapping a real but unrequested object (−25 points) and any rejected command.
+wave-clear.opus        | wave      | Rising three-note harp arpeggio with cheerful sparkling finish                     | The request strip empties and the next wave is revealed (rules event `wave-clear`).
+round-win.opus         | win       | Warm four-note victory fanfare on marimba with shimmering sustain tail             | Results screen after a round that ended with reason `all-found`. Plays on the music bus.
+round-lose.opus        | lose      | Soft descending three-note melancholy phrase on muted felt piano                   | Results screen after `time-up` or `move-limit`. Gentle, never punitive.
+hint-reveal.opus       | hint      | Airy magical shimmer, light glockenspiel glissando like dust sparkling             | A hint is spent (−50 points); the hinted object starts pulsing its ground ring.
+undo-step.opus         | undo      | Short reversed paper-slide swoosh, soft page flipping backward                     | Undo in practice/learn rounds; the found object drops back onto its shelf.
+pause-tock.opus        | pause     | Single soft muted kalimba pluck, calm gentle pause tick                            | Pause menu opens, including the automatic pause when the tab is backgrounded.
+countdown-tick.opus    | countdown | Single soft hollow wooden metronome tick, dry close-mic, gentle countdown beat     | Each 3-2-1-Go step of the pre-round countdown overlay (one step only in reduced motion).
+timer-warning.opus     | timer-low | Soft urgent double tick on muted woodblock, quiet clock warning, slightly tense    | Fires once per timed round when the clock first drops below 30 s, as the HUD timer turns red.
+achievement-unlock.opus| achieve   | Bright rising three-note celeste triad with a soft golden shimmer tail             | An achievement badge is granted on the results screen. Plays on the music bus, over the win/lose sting.

@@ -309,6 +309,9 @@ const Audio = {
       case 'hint':    this.tone('sfx', 880 + v, 0.25, 'sine', 0.14); break;
       case 'undo':    this.tone('sfx', 330, 0.12, 'triangle', 0.12); break;
       case 'pause':   this.tone('sfx', 294, 0.1, 'sine', 0.1); break;
+      case 'countdown': this.tone('sfx', 392, 0.09, 'triangle', 0.13); break;
+      case 'achieve': [659, 880, 1175].forEach((f, i) => this.tone('music', f, 0.32, 'triangle', 0.17, i * 0.09)); break;
+      case 'timer-low': this.tone('sfx', 220, 0.07, 'square', 0.09); this.tone('sfx', 220, 0.07, 'square', 0.09, 0.14); break;
     }
   },
 };
@@ -424,6 +427,9 @@ class NookRenderer {
     const left = new THREE.Mesh(this.geo(new THREE.BoxGeometry(0.3, 6.4, 9)), this.mat(t.wall, 0.95));
     left.position.set(-6.35, 3.2, 0); left.receiveShadow = true;
     this.scene.add(left);
+    // authored wallpaper tile, tinted by the theme wall colour; if the file is
+    // missing or fails to decode the walls simply stay flat-coloured.
+    this.applyWallpaper([back.material, left.material]);
 
     // plank grooves on floor
     const rng = R.mulberry32(decoSeed);
@@ -496,6 +502,24 @@ class NookRenderer {
     })));
     this.particles.userData.base = pos.slice();
     this.scene.add(this.particles);
+  }
+
+  // Async, best-effort: a decoded wallpaper tile multiplies the flat wall colour.
+  applyWallpaper(materials) {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const tex = new THREE.Texture(img);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(4, 2);
+        tex.needsUpdate = true;
+        this.disposables.push(tex);
+        for (const m of materials) { m.map = tex; m.needsUpdate = true; }
+      } catch { /* keep the flat walls */ }
+    };
+    img.onerror = () => { /* keep the flat walls */ };
+    img.src = 'assets/wall-paper.webp';
   }
 
   // ---- procedural item meshes ------------------------------------------------
@@ -955,6 +979,7 @@ const Game = {
         return `<span class="hn-badge ${got ? 'unlocked' : ''}" title="${UI.esc(a.desc)}">${got ? '✓ ' : ''}${UI.esc(a.name)}</span>`;
       }).join('')}</div>
     `, { label: 'Title screen' });
+    panel.classList.add('hn-overlay-keyart');
     panel.addEventListener('click', (ev) => {
       const b = ev.target.closest('[data-act]');
       if (!b) return;
@@ -1142,6 +1167,7 @@ const Game = {
     this.renderer.load(this.level);
     this.buildHud();
     if (mode === 'learn') this.tutorialStep = 0;
+    this._timerWarned = false;
     const reduced = Settings.get('reducedMotion');
     const steps = reduced ? ['Go'] : ['3', '2', '1', 'Go'];
     let i = 0;
@@ -1155,7 +1181,7 @@ const Game = {
         this.enterActive();
       } else {
         div.textContent = steps[i];
-        Audio.play('click');
+        Audio.play('countdown');
       }
     }, reduced ? 300 : 700);
     div.textContent = steps[0];
@@ -1239,7 +1265,10 @@ const Game = {
     const left = this.state.timeLimitMs - this.state.elapsedMs;
     const el = $('hud-timer');
     el.textContent = UI.fmtTime(left);
-    el.classList.toggle('hn-timer-low', left < 30000);
+    const low = left < 30000;
+    el.classList.toggle('hn-timer-low', low);
+    // one-shot warning the first time the round crosses the 30 s mark
+    if (low && !this._timerWarned) { this._timerWarned = true; Audio.play('timer-low'); }
   },
 
   // ---- command dispatch -------------------------------------------------------
@@ -1415,6 +1444,7 @@ const Game = {
         <button class="hn-btn" data-act="menu">Menu</button>
       </div>
     `, { label: 'Results' });
+    if (newAch.length) Audio.play('achieve');
     UI.announce(headline + ' Total score ' + bd.total + '.', true);
     panel.addEventListener('click', (ev) => {
       const b = ev.target.closest('[data-act]');

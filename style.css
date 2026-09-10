@@ -217,3 +217,16 @@ body.hn-reduced-motion .hn-progressbar-fill { transition: none; }
 
 /* larger text option */
 body.hn-large-text { --hn-font-scale: 1.2; }
+
+/* Title-screen key art: the authored diorama render sits behind the menu panel.
+   If assets/keyart-nook.webp is missing the panel keeps its flat --hn-panel fill. */
+.hn-overlay.hn-overlay-keyart {
+  background-color: var(--hn-panel);
+  background-image:
+    linear-gradient(rgba(15, 20, 32, 0.78), rgba(15, 20, 32, 0.90)),
+    url('./assets/keyart-nook.webp');
+  background-size: cover;
+  background-position: center 38%;
+  border-color: var(--hn-accent);
+}
+body.hn-high-contrast .hn-overlay.hn-overlay-keyart { background-image: none; }

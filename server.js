@@ -36,6 +36,7 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.opus': 'audio/ogg',
+  '.webp': 'image/webp',
 };
 
 // --- durable store (JSON file; safe for solo game scope) ----------------------
@@ -247,7 +248,11 @@ function serveStatic(req, res, urlPath) {
   try { rel = decodeURIComponent(rel).replace(/^\/+/, ''); } catch { res.writeHead(400); return res.end('bad request'); }
   const full = path.normalize(path.join(ROOT, rel));
   if (!full.startsWith(ROOT)) { res.writeHead(403); return res.end('forbidden'); }
-  if (rel.startsWith('data' + path.sep) || rel === 'data') { res.writeHead(403); return res.end('forbidden'); }
+  // never ship the store, the tests or dev tooling, and never serve dotfiles
+  const seg = rel.split(/[\\/]/);
+  if (seg.some((p2) => p2.startsWith('.')) || ['data', 'tests', 'tools', 'node_modules'].includes(seg[0])) {
+    res.writeHead(403); return res.end('forbidden');
+  }
   if (!fs.existsSync(full) || !fs.statSync(full).isFile()) { res.writeHead(404); return res.end('not found: ' + urlPath); }
   const ext = path.extname(full).toLowerCase();
   const immutable = ext === '.js' || ext === '.css';

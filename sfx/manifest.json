@@ -70,5 +70,29 @@
     "seconds": 1,
     "prompt": "Single soft muted kalimba pluck, calm gentle pause tick",
     "event": "pause"
+  },
+  {
+    "name": "countdown-tick",
+    "seconds": 1,
+    "prompt": "Single soft hollow wooden metronome tick, dry close-mic, gentle countdown beat, no reverb",
+    "event": "countdown"
+  },
+  {
+    "name": "achievement-unlock",
+    "seconds": 2,
+    "prompt": "Bright rising three-note celeste triad with a soft golden shimmer tail, small reward stinger",
+    "event": "achieve"
+  },
+  {
+    "name": "timer-warning",
+    "seconds": 1,
+    "prompt": "Soft urgent double tick on muted woodblock, quiet clock warning, slightly tense, dry",
+    "event": "timer-low"
+  },
+  {
+    "name": "ui-focus-alt",
+    "seconds": 1,
+    "prompt": "Very short breathy sine tick with a faint felt thud, delicate focus-move blip",
+    "event": "focus"
   }
 ]

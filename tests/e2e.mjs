@@ -16,49 +16,21 @@
  * Two passes: desktop 1280x800, then a fresh context at 390x844 (hasTouch).
  * Page errors and non-benign console errors fail the run.
  *
- * Note: the game is fully playable offline solo (practice/journey/learn); the
- * StarHermit backend (server.js) only adds daily/leaderboard/cloud-save and is
- * not used here — this test embeds its own static file server.
+ * The real StarHermit backend (server.js) is booted on an ephemeral port, so
+ * the boot time-sync probe, daily fetch and any telemetry hit the actual API
+ * instead of 404ing into offline mode.
  *
  * Run: npm run test:e2e
  */
-import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { chromium } from 'playwright-core';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const require = createRequire(import.meta.url);
+
 const SHOT = (stage, vp) => `/tmp/hidden-nook-e2e-${stage}-${vp}.png`;
 
 // benign GPU/swiftshader console noise (from tools/production_game_audit.mjs)
 const browserNoise = /GL Driver Message|GPU stall due to ReadPixels|Automatic fallback to software WebGL|EnableWebGLDeveloperExtensions/i;
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.ico': 'image/x-icon', '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg',
-  '.glb': 'model/gltf-binary', '.woff2': 'font/woff2', '.ts': 'application/typescript; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-};
-
-function serve() {
-  const server = http.createServer(async (req, res) => {
-    try {
-      let rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/^\/+/, '') || 'index.html';
-      const full = path.normalize(path.join(ROOT, rel));
-      if (!full.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
-      const body = await readFile(full);
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(full).toLowerCase()] || 'application/octet-stream' });
-      res.end(body);
-    } catch {
-      res.writeHead(404); res.end('not found');
-    }
-  });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
-}
 
 const overlayHeading = (page) => page.locator('#overlay-root:not([hidden]) h2').first();
 const foundCount = (page) => page.locator('#hud-progress').textContent()
@@ -156,9 +128,9 @@ async function runPass(browser, vpName, contextOpts) {
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     if (browserNoise.test(m.text())) return;
-    // Platform.syncTime() probes /api/v1/* on boot and falls back to offline
-    // mode by design; the static test server has no API, so the browser logs
-    // the probe's 404 as a resource error. Benign.
+    // Platform.syncTime() and other API probes fall back to offline mode by
+    // design; any console noise tagged to /api/ routes is logged by the real
+    // server, so treat it as benign here.
     if ((m.location()?.url || '').includes('/api/')) return;
     errors.push(`console: ${m.text()} (${m.location()?.url || 'no-url'})`);
   });
@@ -293,7 +265,8 @@ async function playOneFind(page) {
   }
 }
 
-const server = await serve();
+const { server } = require('../server.js');
+await new Promise((res) => server.listen(0, '127.0.0.1', res));
 const PORT = server.address().port;
 let browser = null;
 let failed = false;
