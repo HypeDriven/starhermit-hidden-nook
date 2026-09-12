@@ -53,13 +53,16 @@
         <button type="button" id="btn-undo" class="hn-btn" hidden>Undo</button>
         <button type="button" id="btn-cam" class="hn-btn">Reset view</button>
       </div>
-      <h3 class="rail-heading2">Scene objects</h3>
-      <ul id="sr-target-list" class="hn-target-list" aria-label="Navigable list of scene objects"></ul>
+      <details class="hn-objects" open>
+        <summary class="rail-heading2">Scene objects</summary>
+        <ul id="sr-target-list" class="hn-target-list" aria-label="Navigable list of scene objects"></ul>
+      </details>
     </aside>
 
     <footer class="hn-bottombar" aria-label="Bottom action tray">
       <div class="hn-tray" id="bottom-tray" hidden>
         <button type="button" id="tray-hint" class="hn-btn">Hint</button>
+        <button type="button" id="tray-undo" class="hn-btn" hidden>Undo</button>
         <button type="button" id="tray-cam" class="hn-btn">Reset view</button>
         <button type="button" id="tray-pause" class="hn-btn">Pause</button>
       </div>

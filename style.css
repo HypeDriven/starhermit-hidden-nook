@@ -184,6 +184,7 @@ body.hn-reduced-motion .hn-progressbar-fill { transition: none; }
 .hn-badge.unlocked { border-color: var(--hn-accent); color: var(--hn-accent); }
 
 .hn-countdown { font-size: 3rem; font-weight: 700; color: var(--hn-accent); text-align: center; }
+.hn-objects > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
 
 /* --- compact desktop / tablet: rails collapse into drawers --- */
 @media (max-width: 1023px) {
@@ -196,7 +197,9 @@ body.hn-reduced-motion .hn-progressbar-fill { transition: none; }
 @media (max-width: 700px) and (orientation: portrait) {
   .hn-main { padding: 0.6rem calc(0.6rem + var(--hn-safe-right)) calc(0.6rem + var(--hn-safe-bottom)) calc(0.6rem + var(--hn-safe-left)); gap: 0.6rem; }
   .hn-playfield-wrap { min-height: 0; aspect-ratio: 1 / 1; }
-  .hn-rail-right .hn-target-list { display: none; }
+  /* object list stays available, collapsed by default on phones */
+  .hn-rail-right .hn-objects:not([open]) .hn-target-list { display: none; }
+  .hn-rail-right .hn-objects { --collapsed: 1; }
   .hn-tray {
     display: flex; gap: 0.6rem; justify-content: space-around;
     padding-bottom: var(--hn-safe-bottom);
@@ -207,9 +210,15 @@ body.hn-reduced-motion .hn-progressbar-fill { transition: none; }
 
 /* --- landscape mobile: narrow status rail --- */
 @media (max-height: 500px) and (orientation: landscape) {
-  .hn-main { grid-template-columns: minmax(150px, 1fr) minmax(0, 4fr); grid-template-rows: minmax(0, 1fr) auto; grid-template-areas: "left play" "tray play"; }
-  .hn-rail-right { display: none; }
-  .hn-tray { display: flex; gap: 0.5rem; }
+  .hn-main { grid-template-columns: minmax(170px, 1fr) minmax(0, 4fr); grid-template-rows: minmax(0, 1fr) auto auto; grid-template-areas: "left play" "score play" "tray play"; }
+  /* score stays visible as a compact strip above the tray; the object list is collapsible */
+  .hn-rail-right { grid-area: score; max-height: 32vh; overflow: auto; padding: 0.4rem 0.6rem; }
+  .hn-rail-right .score-block { display: flex; align-items: baseline; gap: 0.4rem; }
+  .hn-rail-right #action-row { display: none; }
+  .hn-rail-right .hn-objects { font-size: 0.8rem; }
+  .hn-rail-right .hn-objects:not([open]) .hn-target-list { display: none; }
+  .hn-rail-left { overflow: auto; }
+  .hn-tray { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .hn-tray .hn-btn { min-height: 44px; flex: 1; }
   .hn-playfield-wrap { min-height: 0; }
 }

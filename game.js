@@ -898,8 +898,10 @@ class NookRenderer {
     this.focusIndex = -1;
   }
   panBy(dx, dy) {
-    this.rig.yaw = clamp(this.rig.yaw - dx * 0.005, -1.1, 1.1);
-    this.rig.pitch = clamp(this.rig.pitch + dy * 0.004, 0.25, 1.25);
+    // Orbit stays on the open face of the diorama: beyond ±0.75 rad yaw or
+    // above ~1.0 rad pitch the side/back walls come between camera and room.
+    this.rig.yaw = clamp(this.rig.yaw - dx * 0.005, -0.75, 0.75);
+    this.rig.pitch = clamp(this.rig.pitch + dy * 0.004, 0.25, 1.0);
     if (this.onCameraMove) this.onCameraMove();
   }
   zoomBy(f) {
@@ -1011,6 +1013,12 @@ class NookRenderer {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
+    // Narrow viewports: the home distance grows so the whole room width fits
+    // (the authored 15 assumes a ~1.3 aspect); the user-zoom clamp follows.
+    const homeDist = Math.min(24, 15 * Math.max(1, 1.3 / this.camera.aspect));
+    const wasHome = Math.abs(this.rig.dist - JSON.parse(this.rigHome).dist) < 0.01;
+    this.rigHome = JSON.stringify({ yaw: 0, pitch: 0.62, dist: homeDist });
+    if (wasHome) this.rig.dist = homeDist;
   }
 
   dispose() {
@@ -1400,7 +1408,11 @@ const Game = {
     $('btn-pause').hidden = false;
     $('action-row').hidden = false;
     $('bottom-tray').hidden = false;
+    // phones start with the object list collapsed (expand from its heading)
+    const objects = document.querySelector('.hn-objects');
+    if (objects && matchMedia('(max-width: 700px) and (orientation: portrait), (max-height: 500px) and (orientation: landscape)').matches) objects.open = false;
     $('btn-undo').hidden = !this.state.allowUndo;
+    $('tray-undo').hidden = !this.state.allowUndo;
     $('hud-timer').hidden = !this.state.timeLimitMs;
     UI.announce('Round started. ' + this.waveText());
     if (this.state.mode === 'learn') this.showTutorialPrompt();
@@ -1880,6 +1892,7 @@ const Game = {
     $('tray-pause').addEventListener('click', () => this.pause());
     $('btn-hint').addEventListener('click', () => this.hint());
     $('tray-hint').addEventListener('click', () => this.hint());
+    $('tray-undo').addEventListener('click', () => this.undo());
     $('btn-undo').addEventListener('click', () => this.undo());
     $('btn-cam').addEventListener('click', () => { this.renderer.resetCamera(); Audio.play('click'); });
     $('tray-cam').addEventListener('click', () => { this.renderer.resetCamera(); Audio.play('click'); });
