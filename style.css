@@ -56,6 +56,9 @@ body { overscroll-behavior: none; }
 }
 .hn-game-title { margin: 0; font-size: 1.3rem; line-height: 1.1; color: var(--hn-accent); }
 .hn-status-line { display: block; margin-top: 0.15rem; font-size: 0.82rem; color: var(--hn-text-dim); min-height: 1em; }
+.hn-sync-status { display: block; margin-top: 0.1rem; font-size: 0.72rem; color: var(--hn-text-dim); }
+.hn-sync-status[data-state="synced"] { color: var(--hn-good); }
+.hn-sync-status[data-state="offline"] { color: var(--hn-bad); }
 .hn-timer { font-variant-numeric: tabular-nums; font-size: 1.15rem; font-weight: 600; color: var(--hn-accent); }
 .hn-timer.hn-timer-low { color: var(--hn-bad); }
 .hn-top-actions { display: flex; gap: 0.5rem; }

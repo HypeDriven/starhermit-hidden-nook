@@ -19,7 +19,7 @@ candle burns down.
 | Session | 90 s (early journey stage) to ~4 min (late stage); a daily run is one round |
 | Platforms | Desktop and mobile browsers, portrait and landscape; WebGL2 required |
 | Rendering | Three.js (`vendor/three.module.js`, r-series ES module) drawing a fully procedural scene — no meshes, textures or sprites are loaded for gameplay geometry; every object is built at runtime from primitives in `NookRenderer.buildItemMesh` |
-| Persistence | `localStorage` (checksummed), plus optional cloud save through the game's own `server.js` |
+| Persistence | `localStorage` (checksummed) is the offline cache; on-platform the same document mirrors to the StarHermit cloud-save slot |
 | Build id | `BUILD = '1.0.0'` in `game.js`; content schema `CONTENT_VERSION = 2`; rules schema `SCHEMA_VERSION = 2` |
 
 ### File map
@@ -463,19 +463,23 @@ are **not** implemented; see §17. What the design commits to when they land:
 
 | Feature | How |
 |---|---|
-| Identity | A `launch_token` / `token` query parameter is read once at boot, kept in memory only (never persisted) and sent as `X-Launch-Token`. Without one the client mints a local `hn-guest-id` and sends `X-Guest-Id`. |
-| Server script | `server.js` is the declared authoritative script and serves both the static bundle and `/api/v1/*`. |
-| Time sync | `GET /api/v1/time` at boot; the round-trip midpoint sets `Platform.timeOffsetMs` so the daily rollover and streak logic use platform time, not the device clock. |
-| Daily content | `GET /api/v1/daily` returns the authoritative day and an `excluded` flag; a defective day is played unranked instead of being hidden. |
-| Leaderboards | `POST /api/v1/daily/submit` with the full replay envelope; the server re-runs the command log through the same `rules.js` and rejects `hash-mismatch` or implausible scores. `GET /api/v1/leaderboard?scope=global&day=` renders the Score chase screen; offline it falls back to local bests. |
-| Achievements | `POST /api/v1/achievements` mirrors each local unlock; the server keeps an idempotent set. |
-| Cloud save | `PUT /api/v1/save` with a SHA-256 checksum over the document; on a non-descendant conflict the server returns `kept`, both snapshots survive, and the status line says which one won. `GET /api/v1/save` loads it back. |
-| Telemetry | `navigator.sendBeacon('/api/v1/telemetry')` for `round-start`, `round-end`, `round-quit`, `tutorial-step` and `settings-change` — only when hosted **and** consented. |
+| Identity | The launch token is read once from the URL fragment `#game_token=` (query `?launch_token=`/`?token=` remains as a local-dev fallback), kept in memory only (never persisted) and stripped via `history.replaceState`. The payload's `sub` and `game_scope` are decoded (no signature verify); hosted mode is on iff a token was read. Every REST call sends `Authorization: Bearer`; a scoped token is re-minted every 45 min via `POST /api/v1/games/{slug}/launch-token` (60 s retry). Without a token no platform calls are made. |
+| Profile | `GET /api/v1/users/{sub}/profile` → `nickname`, shown in the status line ("Signed in as …"); fallback `"Player " + id.slice(0,8)`. `GET /api/v1/me` is never called and usernames never displayed. |
+| Server script | `server.js` is this game's own dev server (static files + validated daily/board). It is detected at boot by its `contentVersion` stamp on `/api/v1/time`, probed only when no launch token is present (local dev); on-platform those surfaces do not exist. It also accepts `Authorization: Bearer` as an identity for its own routes. |
+| Time sync | `GET /api/v1/time` at boot (own server / local dev only); the round-trip midpoint sets `Platform.timeOffsetMs` so the daily rollover and streak logic use server time, not the device clock. |
+| Daily content | Own server: `GET /api/v1/daily` returns the authoritative day and an `excluded` flag; a defective day is played unranked instead of being hidden. Platform: the day is computed locally and played unranked, with no fabricated calls. |
+| Leaderboards | Own server (local dev): `POST /api/v1/daily/submit` with the full replay envelope — the server re-runs the command log through the same `rules.js` and rejects tampered or implausible scores; `GET /api/v1/leaderboard?scope=global&day=` renders the Score chase screen. Platform: read-only per the wiki — `GET /api/v1/games/{slug}` → `leaderboardId`, then `GET /api/v1/leaderboards/{id}/entries` with userIds resolved to nicknames via the profile helper; no `leaderboardId` (or offline) falls back to personal bests. |
+| Achievements | Local only: unlocks are timestamps inside the progress document and mirror to the cloud-save slot with it. No unlock endpoint is called (`server.js` has no Jint game-script contract, so there is no script-owned path). |
+| Cloud save | `GET`/`PUT /api/v1/me/cloud-saves/{slug}` (slug from `game_scope`), body `{dataBase64}` — a stored zip (cookbook helper) wrapping the progress JSON. Load prefers the remote snapshot when newer and intact; saves debounce 2 s and flush on `pagehide`/`visibilitychange`; a small sync chip (Saving… / Cloud synced / Offline — local only) sits under the status line. `localStorage` remains the offline cache. |
+| Telemetry | `navigator.sendBeacon('/api/v1/telemetry')` for `round-start`, `round-end`, `round-quit`, `tutorial-step` and `settings-change` — own server (local dev) only **and** consented; the platform has no per-game telemetry endpoint. |
 
 **Deliberately not used.** Presence, real-time sessions, matchmaking, parties, chat, friends graphs
 and in-app purchase. Hidden Nook is solo; its only social surface is the asynchronous daily board.
-Every network call degrades to a local behaviour, so the game is fully playable from `file://` or
-offline — `Platform.hosted` gates all of it.
+Platform achievements unlock (no catalog entitlement; unlocks stay local in the save document) and
+any client score submission (boards are script-owned; the platform board is read-only) are likewise
+unused. Every network call degrades to a local behaviour, so the game is fully playable from
+`file://` or offline — `Platform.hosted` gates the platform calls and `Platform.ownServer` the
+own-dev-server ones.
 
 ---
 
@@ -602,8 +606,9 @@ console/page error at either viewport.
 - **No music.** Only stings and room tone; the `music` bus and its volume slider control very
   little.
 - **Gamepad support is unbindable** and polls at a fixed 10 Hz.
-- **The daily leaderboard shows truncated guest ids** (`guest-` plus six characters) rather than
-  platform display names.
+- **Leaderboard names** — on-platform entries resolve to platform nicknames via the profile
+  helper; the own-server dev board shows the signed-in nickname when a token identity exists
+  and a truncated guest id only for pure local play.
 
 ---
 
@@ -613,7 +618,5 @@ console/page error at either viewport.
    in §10 is decided but no locale files or lookup layer exist; every string is currently an English
    literal in `game.js` / `content.js`.
 2. **A settings language picker**, which §10 assumes as the first source of the locale choice.
-3. **Platform display names on the leaderboard** — the submission already carries the identity
-   header, but the client sends and the board renders a truncated guest id.
-4. **Anchor de-collision at generation time** (a minimum separation pass in `C.generateLevel`), which
+3. **Anchor de-collision at generation time** (a minimum separation pass in `C.generateLevel`), which
    would remove the overlap noted in §16.

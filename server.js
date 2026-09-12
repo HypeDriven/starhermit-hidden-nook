@@ -73,10 +73,13 @@ function readBody(req, limit) {
   });
 }
 
-// Identity: short-lived launch token. Hosted deployments pass a signed token;
-// locally we accept a guest identity header. Never persisted by the client.
+// Identity: short-lived launch token. Hosted deployments pass a signed token
+// (Authorization: Bearer); locally we still accept the legacy X-Launch-Token
+// header or a guest identity header. Never persisted by the client.
 function identity(req) {
-  const tok = req.headers['x-launch-token'] || '';
+  const auth = req.headers['authorization'] || '';
+  const m = /^Bearer\s+(.+)$/.exec(auth);
+  const tok = (m && m[1]) || req.headers['x-launch-token'] || '';
   if (tok && tok.length <= 256) return 'tok:' + crypto.createHash('sha256').update(tok).digest('hex').slice(0, 24);
   const guest = req.headers['x-guest-id'] || '';
   if (/^[a-zA-Z0-9_-]{4,64}$/.test(guest)) return 'guest:' + guest;

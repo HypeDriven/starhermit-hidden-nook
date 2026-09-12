@@ -15,28 +15,65 @@ const BUILD = '1.0.0';
 const $ = (id) => document.getElementById(id);
 
 // ===========================================================================
-// platform: launch token, time sync, REST with retries, offline fallback
+// platform: launch token, profile, time sync, REST with retries, offline fallback
 // ===========================================================================
 const Platform = {
-  token: null,
+  token: null,       // launch token (memory only, never persisted)
+  sub: null,         // user id from the token payload
+  gameKey: null,     // game slug from game_scope (cloud-save slot, board lookup)
+  nickname: null,
   guestId: null,
-  hosted: false,
-  timeOffsetMs: 0, // serverNow - clientNow
+  hosted: false,     // true iff a launch token was read
+  ownServer: false,  // true when /api/v1/time answers with this game's content stamp
+  leaderboardId: null,
+  timeOffsetMs: 0,   // serverNow - clientNow
+  refreshTimer: null,
+  _profileCache: {},
+
+  decodePayload(token) {
+    const p = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(p + '='.repeat((4 - p.length % 4) % 4)));
+  },
 
   init() {
-    const q = new URLSearchParams(location.search);
-    this.token = q.get('launch_token') || q.get('token') || null; // never persisted
+    // Primary: fragment #game_token=<jwt> (&session_id=…), read once then
+    // stripped from the URL. Query params stay as a local-dev fallback only.
+    let token = null;
+    if (location.hash.length > 1) {
+      const frag = new URLSearchParams(location.hash.slice(1));
+      token = frag.get('game_token');
+      if (token) {
+        frag.delete('game_token');
+        frag.delete('session_id');
+        const rest = frag.toString();
+        history.replaceState(null, '', location.pathname + location.search + (rest ? '#' + rest : ''));
+      }
+    }
+    if (!token) {
+      const q = new URLSearchParams(location.search);
+      token = q.get('launch_token') || q.get('token') || null; // local dev only
+    }
+    this.token = token;
+    this.hosted = !!token; // hosted mode activates iff a token was read
+    if (token) {
+      try {
+        const claims = this.decodePayload(token);
+        this.sub = claims.sub || null;
+        this.gameKey = claims.game_scope || null;
+      } catch { /* malformed token: ids stay null, cloud/board calls skip */ }
+    }
     this.guestId = localStorage.getItem('hn-guest-id');
     if (!this.guestId) {
       this.guestId = 'g-' + Math.random().toString(36).slice(2, 12);
       localStorage.setItem('hn-guest-id', this.guestId);
     }
+    this.scheduleRefresh();
   },
 
   headers() {
     const h = { 'Content-Type': 'application/json' };
-    if (this.token) h['X-Launch-Token'] = this.token;
-    else h['X-Guest-Id'] = this.guestId;
+    if (this.token) h['Authorization'] = 'Bearer ' + this.token;
+    else h['X-Guest-Id'] = this.guestId; // this game's own dev server only
     return h;
   },
 
@@ -57,30 +94,156 @@ const Platform = {
     return { error: 'offline' };
   },
 
+  async fetchBytes(path, opts) {
+    try {
+      const res = await fetch(path, Object.assign({ headers: this.headers() }, opts));
+      if (!res.ok) return { error: 'http-' + res.status, status: res.status };
+      return { bytes: new Uint8Array(await res.arrayBuffer()) };
+    } catch { return { error: 'offline' }; }
+  },
+
+  scheduleRefresh() {
+    clearTimeout(this.refreshTimer);
+    if (!this.token || !this.gameKey) return;
+    this.refreshTimer = setTimeout(() => this.refreshToken(), 45 * 60 * 1000); // token lives 60 min
+  },
+
+  async refreshToken() {
+    if (!this.token || !this.gameKey) return;
+    // Scoped tokens may re-mint: send the current one, swap in the reply.
+    const r = await this.fetchJSON('/api/v1/games/' + encodeURIComponent(this.gameKey) + '/launch-token', { method: 'POST' }, 0);
+    if (r && r.token) {
+      this.token = r.token;
+      try {
+        const claims = this.decodePayload(this.token);
+        if (claims.sub) this.sub = claims.sub;
+      } catch { /* keep the existing sub */ }
+    } else {
+      this.refreshTimer = setTimeout(() => this.refreshToken(), 60000); // transient: retry ~60 s
+      return;
+    }
+    this.scheduleRefresh();
+  },
+
+  async loadProfile() {
+    if (!this.sub) return;
+    const r = await this.fetchJSON('/api/v1/users/' + encodeURIComponent(this.sub) + '/profile', {}, 1);
+    this.nickname = (r && r.nickname) ? r.nickname : 'Player ' + String(this.sub).slice(0, 8);
+  },
+
+  async nicknameFor(userId) {
+    if (this._profileCache[userId]) return this._profileCache[userId];
+    let name = null;
+    const r = await this.fetchJSON('/api/v1/users/' + encodeURIComponent(userId) + '/profile', {}, 0);
+    if (r && r.nickname) name = r.nickname;
+    name = name || 'Player ' + String(userId).slice(0, 8);
+    this._profileCache[userId] = name;
+    return name;
+  },
+
   async syncTime() {
+    // This game's own server stamps contentVersion on /time; the platform does
+    // not, and it never runs server.js (it is not a Jint game script). Probe
+    // only outside platform hosting — on-platform the own-server daily/board/
+    // telemetry surfaces simply do not exist and a probe would just 404.
+    this.ownServer = false;
+    this.timeOffsetMs = 0;
+    if (this.hosted) return this.hosted;
     const t0 = Date.now();
     const r = await this.fetchJSON('/api/v1/time', {}, 0);
     const t1 = Date.now();
-    if (r && r.now) {
-      this.hosted = true;
-      this.timeOffsetMs = r.now - Math.round((t0 + t1) / 2);
-    } else {
-      this.hosted = false;
-      this.timeOffsetMs = 0;
-    }
+    this.ownServer = !!(r && r.contentVersion);
+    if (r && r.now) this.timeOffsetMs = r.now - Math.round((t0 + t1) / 2);
     return this.hosted;
   },
 
   now() { return Date.now() + this.timeOffsetMs; },
 
-  // anonymous funnel events; only with consent and only when hosted
+  // anonymous funnel events; only with consent and only against this game's
+  // own dev server — the platform has no per-game telemetry endpoint
   telemetry(event, data) {
-    if (!Settings.get('telemetryConsent') || !this.hosted) return;
+    if (!Settings.get('telemetryConsent') || !this.ownServer) return;
     try {
       navigator.sendBeacon('/api/v1/telemetry', JSON.stringify({ event, data, at: Date.now() }));
     } catch { /* ignore */ }
   },
 };
+
+// Minimal ZIP writer/reader (stored entries only, no compression).
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function zipStore(name, dataBytes) {
+  const enc = new TextEncoder();
+  const nameB = enc.encode(name);
+  const crc = crc32(dataBytes);
+  const out = [];
+  const u16 = (v) => out.push(v & 0xff, (v >> 8) & 0xff);
+  const u32 = (v) => out.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff);
+  u32(0x04034b50); u16(20); u16(0); u16(0); u16(0); u16(0);
+  u32(crc); u32(dataBytes.length); u32(dataBytes.length);
+  u16(nameB.length); u16(0);
+  const local = out.length;
+  const head = new Uint8Array(out);
+  const cd = [];
+  const c16 = (v) => cd.push(v & 0xff, (v >> 8) & 0xff);
+  const c32 = (v) => cd.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff);
+  c32(0x02014b50); c16(20); c16(20); c16(0); c16(0); c16(0); c16(0);
+  c32(crc); c32(dataBytes.length); c32(dataBytes.length);
+  c16(nameB.length); c16(0); c16(0); c16(0); c16(0); c32(0); c32(0); // attrs + local-header offset
+  const cdHead = new Uint8Array(cd);
+  const cdOff = head.length + nameB.length + dataBytes.length;
+  const parts = [head, nameB, dataBytes, cdHead, nameB];
+  const eocd = [];
+  const e32 = (v) => eocd.push(v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff);
+  const e16 = (v) => eocd.push(v & 0xff, (v >> 8) & 0xff);
+  e32(0x06054b50); e16(0); e16(0); e16(1); e16(1);
+  e32(cdHead.length + nameB.length); e32(cdOff); e16(0);
+  parts.push(new Uint8Array(eocd));
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const buf = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) { buf.set(p, o); o += p.length; }
+  return buf;
+}
+function unzipFirstEntry(zipBytes) {
+  // Stored single-entry reader: scan local headers for compression 0.
+  const dv = new DataView(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+  let off = 0;
+  while (off + 30 <= zipBytes.length && dv.getUint32(off, true) === 0x04034b50) {
+    const method = dv.getUint16(off + 8, true);
+    const size = dv.getUint32(off + 18, true);
+    const nameLen = dv.getUint16(off + 26, true);
+    const extraLen = dv.getUint16(off + 28, true);
+    const dataOff = off + 30 + nameLen + extraLen;
+    if (method !== 0) throw new Error('unsupported zip entry');
+    return zipBytes.slice(dataOff, dataOff + size);
+  }
+  throw new Error('bad zip');
+}
+function bytesToBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function base64ToBytes(b64) {
+  const s = atob(b64);
+  const b = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+  return b;
+}
 
 // ===========================================================================
 // settings: persisted per-game preferences
@@ -123,16 +286,19 @@ const Settings = {
 };
 
 // ===========================================================================
-// progress: versioned, checksummed local save + optional cloud sync
+// progress: versioned, checksummed local save (offline cache) + platform
+// cloud-save mirror in one slot
 // ===========================================================================
 const Progress = {
   doc: null,
+  cloudReady: false, // gate pushes until the remote snapshot has been considered
+  _cloudTimer: null,
   fresh() {
     return {
       v: 2, updatedAt: 0,
       journeyUnlocked: 0,            // highest completed journey index + 1
       bestScores: {},                // levelId -> {score, reason, elapsedMs, invalids}
-      achievements: {},              // key -> timestamp
+      achievements: {},              // key -> timestamp (local; rides in the cloud doc)
       foundTotal: 0,
       dailyStreak: { last: null, count: 0 },
       tutorialDone: false,
@@ -163,36 +329,53 @@ const Progress = {
     this.doc.updatedAt = Platform.now();
     this.doc.checksum = this.checksumOf(this.doc);
     try { localStorage.setItem('hn-progress-v2', JSON.stringify(this.doc)); } catch { /* full */ }
-    this.cloudPush();
+    this.scheduleCloudPush();
   },
-  async sha256(obj) {
-    const data = new TextEncoder().encode(JSON.stringify(obj));
-    const buf = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  scheduleCloudPush() {
+    if (!Platform.token || !Platform.gameKey || !this.cloudReady) return;
+    UI.setSync('saving');
+    clearTimeout(this._cloudTimer);
+    this._cloudTimer = setTimeout(() => this.cloudPush(), 2000); // debounce
+  },
+  flushCloud() {
+    clearTimeout(this._cloudTimer);
+    if (Platform.token && Platform.gameKey && this.cloudReady) this.cloudPush();
+  },
+  async cloudPull() {
+    if (!Platform.token || !Platform.gameKey) { this.cloudReady = true; return; }
+    UI.setSync('saving');
+    const r = await Platform.fetchBytes('/api/v1/me/cloud-saves/' + encodeURIComponent(Platform.gameKey), {}, 0);
+    if (r && r.bytes && r.bytes.length) {
+      try {
+        const remote = JSON.parse(new TextDecoder().decode(unzipFirstEntry(r.bytes)));
+        // Conflict resolution: prefer the remote snapshot when it is newer and
+        // intact; localStorage already holds the offline cache either way.
+        if (remote && remote.v === 2 && remote.checksum === this.checksumOf(remote)
+            && (!this.doc || (remote.updatedAt || 0) > (this.doc.updatedAt || 0))) {
+          this.doc = remote;
+          try { localStorage.setItem('hn-progress-v2', JSON.stringify(this.doc)); } catch { /* full */ }
+        }
+      } catch { /* unreadable remote snapshot: keep local */ }
+    }
+    this.cloudReady = true;
+    UI.setSync(r && r.error && r.status !== 404 ? 'offline' : 'synced');
   },
   async cloudPush() {
-    if (!Platform.hosted) return;
-    // server verifies a SHA-256 checksum over the doc without its checksum field
-    let doc;
+    if (!Platform.token || !Platform.gameKey || !this.cloudReady) return;
+    UI.setSync('saving');
     try {
-      const snap = JSON.parse(JSON.stringify(this.doc)); // deep snapshot: no shared refs
-      const wire = Object.assign({}, snap, { checksum: undefined });
-      doc = Object.assign({}, snap, { checksum: await this.sha256(wire) });
-    } catch { return; } // no crypto.subtle (non-secure context): stay local-only
-    const r = await Platform.fetchJSON('/api/v1/save', { method: 'PUT', body: JSON.stringify({ save: doc }) }, 0);
-    if (r && r.conflict && r.kept) {
-      // Neither a strict descendant: keep both, prefer the one with more progress
-      // and surface the choice in the status line.
-      const keepRemote = (r.kept.journeyUnlocked || 0) > (this.doc.journeyUnlocked || 0);
-      if (keepRemote) this.doc = r.kept;
-      UI.setStatus('Save conflict: kept the ' + (keepRemote ? 'cloud' : 'local') + ' snapshot; both preserved.');
-    }
+      const data = new TextEncoder().encode(JSON.stringify(this.doc));
+      const r = await Platform.fetchJSON('/api/v1/me/cloud-saves/' + encodeURIComponent(Platform.gameKey), {
+        method: 'PUT',
+        body: JSON.stringify({ dataBase64: bytesToBase64(zipStore('save.json', data)) }),
+      }, 0);
+      UI.setSync(r && r.error ? 'offline' : 'synced');
+    } catch { UI.setSync('offline'); }
   },
   unlock(key) {
     if (this.doc.achievements[key]) return false;
     this.doc.achievements[key] = Date.now();
-    this.save();
-    if (Platform.hosted) Platform.fetchJSON('/api/v1/achievements', { method: 'POST', body: JSON.stringify({ key }) }, 0);
+    this.save(); // local unlock; the cloud-saved doc mirrors it on next push
     return true;
   },
 };
@@ -853,6 +1036,14 @@ const UI = {
     setTimeout(() => { el.textContent = msg; }, 30);
   },
   setStatus(msg) { $('status-line').textContent = msg || ''; },
+  setSync(state) {
+    const el = $('sync-status');
+    if (!el) return;
+    if (!Platform.token || !Platform.gameKey) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = { saving: 'Saving…', synced: 'Cloud synced', offline: 'Offline — local only' }[state] || state;
+    el.dataset.state = state;
+  },
 
   showOverlay(html, opts) {
     const root = $('overlay-root');
@@ -916,8 +1107,8 @@ const Game = {
   // ---- lifecycle ----------------------------------------------------------
   async boot() {
     Settings.load();
-    Progress.load();
     Platform.init();
+    Progress.load();
     UI.setStatus('Loading…');
     try {
       this.renderer = new NookRenderer($('canvas-holder'));
@@ -932,11 +1123,20 @@ const Game = {
     this.renderer.onCameraMove = () => { if (this.tutorialStep === 0 && this.phase === 'active') this.advanceTutorial('pan'); };
 
     await Platform.syncTime();
-    UI.setStatus(Platform.hosted ? 'Connected' : 'Offline mode — progress is stored locally');
+    if (Platform.hosted) {
+      UI.setStatus('Connecting…');
+      await Promise.all([Platform.loadProfile(), Progress.cloudPull()]);
+      UI.setStatus('Signed in as ' + (Platform.nickname || 'Player'));
+    } else if (Platform.ownServer) {
+      UI.setStatus('Connected (local server) — progress is stored locally');
+    } else {
+      UI.setStatus('Offline mode — progress is stored locally');
+    }
 
     this.bindGlobalInput();
     this.bindHudButtons();
     window.addEventListener('resize', () => this.renderer.resize());
+    window.addEventListener('pagehide', () => Progress.flushCloud());
     document.addEventListener('visibilitychange', () => this.onVisibility());
 
     this.lastFrame = performance.now();
@@ -1095,15 +1295,23 @@ const Game = {
 
   async startDaily() {
     this.phase = 'mode-select';
-    UI.setStatus('Fetching daily seed…');
+    // The validated daily lives on this game's own server; on the platform
+    // the day is computed locally and played unranked.
     let info = null;
-    if (Platform.hosted) info = await Platform.fetchJSON('/api/v1/daily', {}, 1);
+    if (Platform.ownServer) {
+      UI.setStatus('Fetching daily seed…');
+      info = await Platform.fetchJSON('/api/v1/daily', {}, 1);
+    }
     const day = new Date(Platform.now()).toISOString().slice(0, 10);
     const level = C.dailyLevel(info && info.day ? info.day : day);
     if (info && info.excluded) {
       UI.setStatus('Today\'s daily is excluded from ranking (defective content). Playing casually.');
-    } else UI.setStatus(Platform.hosted ? 'Connected' : 'Offline — daily seed computed locally');
-    this.dailyInfo = { day: level.dailyDay, ranked: !(info && info.excluded) };
+    } else if (Platform.ownServer && !(info && info.error)) {
+      UI.setStatus('Connected');
+    } else {
+      UI.setStatus('Daily seed computed locally — unranked');
+    }
+    this.dailyInfo = { day: level.dailyDay, ranked: Platform.ownServer && !!(info && info.day) && !(info && info.excluded) };
     this.prepare(level, 'daily');
   },
 
@@ -1404,22 +1612,26 @@ const Game = {
     }
     Progress.save();
 
-    // daily submission with replay envelope
+    // daily submission with replay envelope — only against this game's own
+    // server, which re-runs the log; the platform has no client submission path
     let submitHtml = '';
-    if (s.mode === 'daily' && Platform.hosted && this.dailyInfo && this.dailyInfo.ranked) {
+    if (s.mode === 'daily' && Platform.ownServer && this.dailyInfo && this.dailyInfo.ranked) {
       UI.setStatus('Validating score…');
       const envelope = R.makeReplayEnvelope(s, BUILD);
+      const who = Platform.nickname || 'guest-' + Platform.guestId.slice(2, 8);
       const res = await Platform.fetchJSON('/api/v1/daily/submit', {
         method: 'POST',
         body: JSON.stringify({
-          day: this.dailyInfo.day, player: 'guest-' + Platform.guestId.slice(2, 8),
+          day: this.dailyInfo.day, player: who,
           sessionId: this.sessionId, envelope, assists: [], contentVersion: C.CONTENT_VERSION,
         }),
       }, 1);
       if (res && res.ok) submitHtml = `<p>Ranked submission accepted — <strong>rank #${res.rank}</strong> today.</p>`;
       else submitHtml = `<p>Submission not ranked (${UI.esc((res && res.error) || 'offline')}). Score kept locally.</p>`;
     } else if (s.mode === 'daily') {
-      submitHtml = '<p>Offline — score stored locally; submit when connected.</p>';
+      submitHtml = Platform.hosted
+        ? '<p>Daily played locally — ranked submission is only available on this game\'s own server. Score saved to your progress.</p>'
+        : '<p>Offline — score stored locally.</p>';
     }
 
     const headline = won ? 'Nook cleared!' : (s.reason === 'time-up' ? 'Time ran out' : s.reason === 'move-limit' ? 'Out of taps' : 'Round over');
@@ -1481,15 +1693,40 @@ const Game = {
     const day = new Date(Platform.now()).toISOString().slice(0, 10);
     let rows = '';
     let note = '';
-    if (Platform.hosted) {
+    let who = 'Level';
+    if (Platform.ownServer) {
+      // This game's own replay-validated board (local dev server).
+      who = 'Player';
       const r = await Platform.fetchJSON('/api/v1/leaderboard?scope=global&day=' + day, {}, 1);
       if (r && r.entries) {
         rows = r.entries.map((e) => `<tr><td>${e.rank}</td><td>${UI.esc(e.player)}</td><td>${e.score}</td></tr>`).join('')
           || '<tr><td colspan="3">No entries yet today.</td></tr>';
-        note = r.validated ? 'Replay-validated global board.' : 'Casual board (plausibility-checked).';
+        note = r.validated ? 'Replay-validated board (this game\'s own server).' : 'Casual board (plausibility-checked).';
       } else note = 'Leaderboard unavailable (' + UI.esc((r && r.error) || 'offline') + ').';
-    } else {
-      note = 'Offline — showing local bests.';
+    } else if (Platform.hosted && Platform.gameKey) {
+      // Platform board is read-only (script-owned): resolve the game's
+      // leaderboardId, list entries, resolve userIds to nicknames.
+      if (Platform.leaderboardId === null) {
+        const g = await Platform.fetchJSON('/api/v1/games/' + encodeURIComponent(Platform.gameKey), {}, 1);
+        Platform.leaderboardId = (g && g.leaderboardId) || false;
+      }
+      if (Platform.leaderboardId) {
+        const r = await Platform.fetchJSON('/api/v1/leaderboards/' + encodeURIComponent(Platform.leaderboardId)
+          + '/entries?page=1&pageSize=50', {}, 1);
+        if (r && r.entries) {
+          who = 'Player';
+          const ids = r.entries.map((e) => (e.userId != null ? e.userId : e.playerId));
+          const names = await Promise.all(ids.map((id) => Platform.nicknameFor(id)));
+          rows = r.entries.map((e, i) => `<tr><td>${e.rank != null ? e.rank : i + 1}</td><td>${UI.esc(names[i])}</td><td>${e.score}</td></tr>`).join('')
+            || '<tr><td colspan="3">No entries yet.</td></tr>';
+          note = 'Global board — read-only on the platform. Personal bests travel with your save.';
+        } else note = 'Leaderboard unavailable (' + UI.esc((r && r.error) || 'offline') + ').';
+      }
+    }
+    if (!rows) {
+      // No board available (offline, or the platform has no leaderboardId):
+      // personal bests are kept locally and cloud-saved with progress.
+      note = note || (Platform.hosted ? 'No platform leaderboard — showing personal bests (saved with your progress).' : 'Offline — showing local bests.');
       rows = Object.entries(Progress.doc.bestScores).slice(0, 20)
         .map(([k, v]) => `<tr><td>—</td><td>${UI.esc(k)}</td><td>${v.score}</td></tr>`).join('')
         || '<tr><td colspan="3">No local scores yet.</td></tr>';
@@ -1497,7 +1734,7 @@ const Game = {
     const panel = UI.showOverlay(`
       <h2>Score chase</h2>
       <p class="rail-sub">${note}</p>
-      <table class="hn-board"><thead><tr><th>#</th><th>${Platform.hosted ? 'Player' : 'Level'}</th><th>Score</th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="hn-board"><thead><tr><th>#</th><th>${who}</th><th>Score</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="hn-btn-row"><button class="hn-btn" data-act="back">Back</button></div>
     `, { label: 'Leaderboard' });
     panel.addEventListener('click', (ev) => {
@@ -1709,6 +1946,7 @@ const Game = {
   },
 
   onVisibility() {
+    if (document.hidden) Progress.flushCloud(); // best-effort cloud flush on hide
     if (document.hidden && this.phase === 'active') {
       // backgrounding pauses solo simulation
       this.pausedByBackground = true;
