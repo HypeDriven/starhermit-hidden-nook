@@ -7,6 +7,8 @@
 // ---------------------------------------------------------------------------
 
 import * as THREE from './vendor/three.module.js';
+import { detectPreset, resolve, describe, presetTier, choosePreset, migrateQuality, PRESETS, CATEGORIES, SHADOW_MAP, PARTICLE_COUNT } from './gfx.js';
+import { gfxStrings } from './gfx-i18n.js';
 
 const R = window.HNRules;
 const C = window.HNContent;
@@ -252,7 +254,7 @@ const SETTINGS_DEFAULTS = {
   music: 0.6, sfx: 0.8, ambience: 0.5,
   reducedMotion: false, highContrast: false, largeText: false,
   leftHanded: false, holdToPan: false, haptics: true,
-  quality: 'auto', // auto | high | medium | low
+  graphics: {}, // gfx.js saved object: { preset, render_scale, adaptive, show_fps, <category> }
   telemetryConsent: false,
   cameraPreset: 'default',
 };
@@ -264,6 +266,12 @@ const Settings = {
       const raw = localStorage.getItem('hn-settings-v1');
       if (raw) this.data = Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(raw));
     } catch { /* defaults */ }
+    // pre-preset saves stored a bare quality tier; carry it over once
+    if ('quality' in this.data) {
+      if (!this.data.graphics || !this.data.graphics.preset) this.data.graphics = { preset: migrateQuality(this.data.quality) };
+      delete this.data.quality;
+    }
+    if (!this.data.graphics || typeof this.data.graphics !== 'object') this.data.graphics = {};
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches && !localStorage.getItem('hn-settings-v1')) {
       this.data.reducedMotion = true;
     }
@@ -281,7 +289,7 @@ const Settings = {
     document.body.classList.toggle('hn-large-text', !!this.data.largeText);
     document.body.classList.toggle('hn-reduced-motion', !!this.data.reducedMotion);
     Audio.applyVolumes();
-    if (window.__hnRenderer) window.__hnRenderer.applyQuality(this.data.quality);
+    if (window.__hnRenderer) window.__hnRenderer.setGraphics(this.data.graphics);
   },
 };
 
@@ -502,18 +510,139 @@ const Audio = {
 // ===========================================================================
 // renderer: Three.js scene, camera rig, picking, VFX, quality tiers
 // ===========================================================================
-const QUALITY_TIERS = {
-  high:   { dpr: 2.0, shadows: true,  particles: 800, antialias: true,  envDetail: 1 },
-  medium: { dpr: 1.5, shadows: true,  particles: 300, antialias: true,  envDetail: 1 },
-  low:    { dpr: 1.0, shadows: false, particles: 100, antialias: false, envDetail: 0.5 },
+// Post-processing grade, applied after tone mapping (display space): gentle S-curve contrast,
+// a touch of saturation, warm highlights / cool shadows and a soft vignette. Mid-tones and the
+// found/hint colours keep their contrast; only the frame edge darkens.
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, uAmount: { value: 1.0 }, uVignette: { value: 0.24 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float uAmount; uniform float uVignette;
+    varying vec2 vUv;
+    void main() {
+      vec4 src = texture2D(tDiffuse, vUv);
+      vec3 c = clamp(src.rgb, 0.0, 1.0);
+      vec3 s = mix(c, c * c * (3.0 - 2.0 * c), 0.22);
+      float l = dot(s, vec3(0.299, 0.587, 0.114));
+      s = mix(vec3(l), s, 1.1);
+      s *= mix(vec3(0.97, 0.99, 1.04), vec3(1.04, 1.0, 0.95), smoothstep(0.25, 0.8, l));
+      c = mix(c, s, uAmount);
+      float d = length((vUv - 0.5) * vec2(1.1, 1.0));
+      c *= 1.0 - uVignette * smoothstep(0.38, 0.85, d);
+      gl_FragColor = vec4(c, src.a);
+    }`,
 };
+
+// three.js addons (same r185 release as vendor/three.*.js), loaded on first need so the Low
+// preset never downloads or compiles them.
+let addonsPromise = null;
+function loadAddons() {
+  if (!addonsPromise) {
+    addonsPromise = Promise.all([
+      import('three/addons/postprocessing/EffectComposer.js'),
+      import('three/addons/postprocessing/RenderPass.js'),
+      import('three/addons/postprocessing/ShaderPass.js'),
+      import('three/addons/postprocessing/OutputPass.js'),
+      import('three/addons/postprocessing/GTAOPass.js'),
+      import('three/addons/postprocessing/UnrealBloomPass.js'),
+      import('three/addons/postprocessing/SMAAPass.js'),
+      import('three/addons/shaders/FXAAShader.js'),
+      import('three/addons/environments/RoomEnvironment.js'),
+    ]).then((m) => Object.assign({}, ...m));
+  }
+  return addonsPromise;
+}
+
+function isMobileDevice() {
+  try {
+    return (navigator.maxTouchPoints || 0) > 0 && window.matchMedia('(pointer: coarse)').matches;
+  } catch { return false; }
+}
+
+// Procedural canvas textures for the "detailed" room (tileable, near-white so the authored
+// material colour still decides the hue).
+function woodTexture(seed, planks) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const rng = R.mulberry32(seed);
+  g.fillStyle = '#e6e6e6';
+  g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 160; i++) {
+    const y = rng() * 256;
+    const v = 170 + Math.floor(rng() * 70);
+    g.strokeStyle = `rgba(${v},${v},${v},${0.25 + rng() * 0.35})`;
+    g.lineWidth = 0.6 + rng() * 2.2;
+    g.beginPath();
+    g.moveTo(0, y);
+    for (let x = 0; x <= 256; x += 32) g.lineTo(x, y + Math.sin(x * 0.03 + i) * (1 + rng() * 2.5));
+    g.stroke();
+  }
+  for (let i = 0; i < 5; i++) { // knots
+    const x = rng() * 256, y = rng() * 256;
+    const grd = g.createRadialGradient(x, y, 0, x, y, 6 + rng() * 6);
+    grd.addColorStop(0, 'rgba(120,120,120,0.55)');
+    grd.addColorStop(1, 'rgba(200,200,200,0)');
+    g.fillStyle = grd;
+    g.fillRect(x - 14, y - 14, 28, 28);
+  }
+  if (planks) {
+    g.fillStyle = 'rgba(90,90,90,0.55)';
+    for (let i = 0; i < planks; i++) g.fillRect(0, Math.round((i * 256) / planks), 256, 2);
+  }
+  return c;
+}
+
+function rugTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, 256, 256);
+  const ring = (r, w, col) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(128, 128, r, 0, Math.PI * 2); g.stroke(); };
+  ring(118, 10, '#e8c98a');
+  ring(104, 4, '#b8a8a0');
+  ring(80, 12, '#d9b079');
+  ring(56, 3, '#c9b8b0');
+  for (let i = 0; i < 16; i++) { // woven diamond band
+    const a = (i / 16) * Math.PI * 2;
+    g.save();
+    g.translate(128 + Math.cos(a) * 92, 128 + Math.sin(a) * 92);
+    g.rotate(a + Math.PI / 4);
+    g.fillStyle = '#e0bf85';
+    g.fillRect(-5, -5, 10, 10);
+    g.restore();
+  }
+  ring(26, 8, '#e8c98a');
+  const img = g.getImageData(0, 0, 256, 256); // fibre noise
+  const rng = R.mulberry32(0x5eed);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (rng() - 0.5) * 34;
+    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+function moteTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  return c;
+}
 
 class NookRenderer {
   constructor(holder) {
     this.holder = holder;
     this.canvas = document.createElement('canvas');
     holder.appendChild(this.canvas);
-    let ctxAttribs = { canvas: this.canvas, antialias: true };
+    let ctxAttribs = { canvas: this.canvas, antialias: true, powerPreference: 'high-performance' };
     try {
       this.renderer = new THREE.WebGLRenderer(ctxAttribs);
     } catch (e) {
@@ -524,6 +653,8 @@ class NookRenderer {
     this.renderer.toneMappingExposure = 1.35;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.gpu = NookRenderer.gpuName(this.renderer);
+    this.detected = detectPreset(this.gpu, isMobileDevice());
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
@@ -541,24 +672,245 @@ class NookRenderer {
     this.particles = null;
     this.flame = null;
     this.pendulum = null;
+    this.candleLight = null;
     this.markerPulse = 0;
     this.onTap = null; // (index|null)
     this.onCameraMove = null;
+    // graphics state (gfx.js): resolved tiers, adaptive scale, post chain
+    this.q = null;
+    this.adaptiveScale = 1;
+    this._frames = [];
+    this.fps = 0;
+    this.pixelRatio = 0;
+    this.composer = null;
+    this.postKey = null;
+    this.postFailed = false;
+    this.addons = null;
+    this.envTex = null;
     this._bindInput();
-    this.applyQuality(Settings.get('quality'));
+    this.setGraphics(Settings.get('graphics'));
   }
 
-  applyQuality(tier) {
-    let q = tier;
-    if (q === 'auto' || !QUALITY_TIERS[q]) {
-      q = (window.innerWidth < 800 || (navigator.hardwareConcurrency || 8) <= 4) ? 'medium' : 'high';
+  static gpuName(r) {
+    try {
+      const gl = r.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return String(gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+    } catch { return ''; }
+  }
+
+  // ---- graphics settings ---------------------------------------------------
+  /** Apply saved graphics settings live (gfx.js shape; `{}` = Auto). */
+  setGraphics(saved) {
+    const json = JSON.stringify(saved || {});
+    if (json === this._gfxJson) return;
+    this._gfxJson = json;
+    const prev = this.q;
+    const g = resolve(saved || {}, this.detected);
+    this.q = g;
+    document.body.dataset.gfxPreset = g.preset;
+    this.canvas.dataset.gfxPreset = g.preset;
+    this.renderer.shadowMap.enabled = SHADOW_MAP[g.shadows] > 0;
+    this.adaptiveScale = 1;
+    this._frames = [];
+    this.postKey = null; // rebuild the post chain on the next frame
+    this._fpsVisible(g.showFps);
+    if (g.post || g.reflections === 'on') this._ensureAddons();
+    const rebuild = prev && this.level && (prev.particles !== g.particles || prev.detail !== g.detail);
+    if (rebuild) this.rebuild();
+    else {
+      this._applyShadows();
+      this._applyEnv();
+      this._touchMaterials();
     }
-    this.tier = QUALITY_TIERS[q];
-    this.tierName = q;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.tier.dpr));
-    this.renderer.shadowMap.enabled = this.tier.shadows;
-    if (this.particles) this.particles.material.size = this.tier.particles > 200 ? 0.05 : 0.07;
-    this.resize();
+  }
+
+  /** What the Graphics panel shows: GPU, auto choice, resolved tiers, cost, frame rate. */
+  graphicsInfo(words) {
+    const px = [Math.round((this._w || 1) * (this.pixelRatio || 1)), Math.round((this._h || 1) * (this.pixelRatio || 1))];
+    return {
+      gpu: this.gpu,
+      detected: this.detected,
+      resolved: this.q,
+      summary: describe(this.q, px, words),
+      fps: Math.round(this.fps || 0),
+      adaptiveScale: Math.round(this.adaptiveScale * 100) / 100,
+      postFailed: !!this.postFailed,
+    };
+  }
+
+  _ensureAddons() {
+    if (this.addons || this._addonsLoading) return;
+    this._addonsLoading = true;
+    loadAddons().then((a) => {
+      this.addons = a;
+      this.postKey = null;
+      this._applyEnv();
+      this._touchMaterials();
+    }, () => {
+      this.postFailed = true; // render directly; the Graphics panel says so
+    });
+  }
+
+  _applyShadows() {
+    const key = this.keyLight;
+    if (!key) return;
+    const size = SHADOW_MAP[this.q.shadows];
+    key.castShadow = size > 0;
+    if (size > 0 && key.shadow.mapSize.x !== size) {
+      key.shadow.mapSize.set(size, size);
+      if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
+    }
+    key.shadow.radius = this.q.shadows === 'low' ? 2 : 3;
+  }
+
+  _applyEnv() {
+    const on = this.q.reflections === 'on' && this.addons;
+    if (on && !this.envTex) {
+      try {
+        const pmrem = new THREE.PMREMGenerator(this.renderer);
+        const room = new this.addons.RoomEnvironment();
+        this.envTex = pmrem.fromScene(room, 0.04).texture;
+        room.dispose && room.dispose();
+        pmrem.dispose();
+      } catch { this.envTex = null; }
+    }
+    this.scene.environment = on ? this.envTex : null;
+    this.scene.environmentIntensity = 0.45;
+    // image-based light takes over part of the flat hemisphere fill
+    if (this.hemi) this.hemi.intensity = this.hemiBase * (on ? 0.7 : 1);
+  }
+
+  _touchMaterials() {
+    this.scene.traverse((o) => {
+      const m = o.material;
+      if (!m) return;
+      for (const mm of Array.isArray(m) ? m : [m]) mm.needsUpdate = true;
+    });
+  }
+
+  _fpsVisible(on) {
+    let el = document.getElementById('gfx-fps');
+    if (on && !el) {
+      el = document.createElement('div');
+      el.id = 'gfx-fps';
+      el.className = 'hn-fps';
+      el.setAttribute('aria-hidden', 'true');
+      el.textContent = '… fps';
+      document.body.append(el);
+    }
+    if (el) el.hidden = !on;
+  }
+
+  _postKey() {
+    const g = this.q;
+    if (!g.post || !this.addons || this.postFailed || !(this._w > 1 && this._h > 1)) return 'none';
+    return [g.ao, g.bloom, g.grade, g.antialias, this._w, this._h, this.pixelRatio].join('|');
+  }
+
+  _buildPost() {
+    const g = this.q;
+    if (this.composer) {
+      for (const p of this.composer.passes) if (p.dispose) p.dispose();
+      this.composer.dispose();
+    }
+    this.composer = null;
+    if (!g.post || !this.addons || this.postFailed) return;
+    const A = this.addons;
+    const w = this._w, h = this._h, pr = this.pixelRatio;
+    try {
+      const target = new THREE.WebGLRenderTarget(Math.round(w * pr), Math.round(h * pr), {
+        type: THREE.HalfFloatType, samples: g.antialias === 'msaa' ? 4 : 0,
+      });
+      const composer = new A.EffectComposer(this.renderer, target);
+      composer.setPixelRatio(pr);
+      composer.setSize(w, h);
+      composer.addPass(new A.RenderPass(this.scene, this.camera));
+      if (g.ao !== 'off') {
+        const ao = new A.GTAOPass(this.scene, this.camera, Math.round(w * pr), Math.round(h * pr));
+        ao.output = A.GTAOPass.OUTPUT.Default;
+        ao.blendIntensity = 0.85;
+        ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.0, scale: 1.0, samples: g.ao === 'high' ? 16 : 8 });
+        ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: g.ao === 'high' ? 6 : 4, rings: 2, samples: g.ao === 'high' ? 16 : 8 });
+        composer.addPass(ao);
+      }
+      if (g.bloom === 'on') {
+        // The threshold is on pre-tone-mapping HDR values (exposure 1.35): lit surfaces stay
+        // below it, only the flames, the lantern, the window and hot specular glints bloom.
+        composer.addPass(new A.UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 2.2));
+      }
+      composer.addPass(new A.OutputPass());
+      if (g.grade === 'on') composer.addPass(new A.ShaderPass(GradeShader));
+      if (g.antialias === 'smaa') composer.addPass(new A.SMAAPass(Math.round(w * pr), Math.round(h * pr)));
+      if (g.antialias === 'fxaa') {
+        const fxaa = new A.ShaderPass(A.FXAAShader);
+        fxaa.material.uniforms.resolution.value.set(1 / (w * pr), 1 / (h * pr));
+        composer.addPass(fxaa);
+      }
+      this.composer = composer;
+    } catch {
+      // Post-processing is an enhancement: render directly if the chain cannot be built.
+      this.postFailed = true;
+      this.composer = null;
+    }
+  }
+
+  // Adaptive resolution: step the render scale down when frames are slow, back up when fast.
+  _adapt(ms) {
+    const f = this._frames;
+    f.push(ms);
+    if (f.length < 90) return false;
+    const avg = f.reduce((a, b) => a + b, 0) / f.length;
+    f.length = 0;
+    this.fps = 1000 / avg;
+    const el = document.getElementById('gfx-fps');
+    if (el && !el.hidden) el.textContent = `${Math.round(this.fps)} fps · ${Math.round(this.pixelRatio * 100) / 100}×`;
+    if (!this.q.adaptive) return false;
+    const before = this.adaptiveScale;
+    if (avg > 26) this.adaptiveScale = Math.max(0.6, this.adaptiveScale - 0.1);
+    else if (avg < 14 && this.adaptiveScale < 1) this.adaptiveScale = Math.min(1, this.adaptiveScale + 0.05);
+    return before !== this.adaptiveScale;
+  }
+
+  /** Render one frame: pixel ratio = min(dpr, preset cap) × preset/user scale × adaptive. */
+  draw(dt) {
+    if (!this._w) this.resize();
+    this._adapt(dt * 1000);
+    const dpr = window.devicePixelRatio || 1;
+    const ratio = clamp(Math.min(dpr, this.q.cap) * this.q.scale * this.adaptiveScale, 0.5, 3);
+    if (Math.abs(ratio - this.pixelRatio) > 1e-3) {
+      this.pixelRatio = ratio;
+      this.renderer.setPixelRatio(ratio);
+      this.renderer.setSize(this._w || 1, this._h || 1, false);
+    }
+    const key = this._postKey();
+    if (key !== this.postKey) {
+      this.postKey = key;
+      this._buildPost();
+    }
+    if (this.composer) {
+      try { this.composer.render(dt); return; } catch { this.postFailed = true; this.postKey = null; this.composer = null; }
+    }
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Rebuild the room for the current tiers, keeping item/camera state. */
+  rebuild() {
+    if (!this.level) return;
+    const states = [];
+    for (const [i, v] of this.itemViews) states.push([i, v.found, v.hinted, v.lift, v.group.rotation.y]);
+    const rig = { yaw: this.rig.yaw, pitch: this.rig.pitch, dist: this.rig.dist, target: this.rig.target.clone() };
+    const focus = this.focusIndex;
+    this.load(this.level);
+    for (const [i, found, hinted, lift, rot] of states) {
+      const v = this.itemViews.get(i);
+      if (!v) continue;
+      Object.assign(v, { found, hinted, lift });
+      v.group.rotation.y = rot;
+    }
+    Object.assign(this.rig, { yaw: rig.yaw, pitch: rig.pitch, dist: rig.dist });
+    this.rig.target.copy(rig.target);
+    this.focusIndex = focus;
   }
 
   // ---- scene construction -------------------------------------------------
@@ -568,7 +920,8 @@ class NookRenderer {
     this.pickables = [];
     this.itemViews.clear();
     this.scene.clear();
-    this.particles = null; this.flame = null; this.pendulum = null;
+    this.particles = null; this.flame = null; this.pendulum = null; this.candleLight = null;
+    this.keyLight = null; this.hemi = null;
   }
 
   track(...objs) { for (const o of objs) this.disposables.push(o); return objs[0]; }
@@ -576,32 +929,76 @@ class NookRenderer {
   mat(color, rough, metal, extra) {
     return this.track(new THREE.MeshStandardMaterial(Object.assign({ color, roughness: rough != null ? rough : 0.7, metalness: metal || 0.05 }, extra)));
   }
+  // Glossy pieces (glazed ceramic, polished metal, lacquer) get a clearcoat at "detailed".
+  gloss(color, rough, metal, coat) {
+    if (this.q.detail !== 'detailed') return this.mat(color, rough, metal);
+    return this.track(new THREE.MeshPhysicalMaterial({
+      color, roughness: rough, metalness: metal || 0.05, clearcoat: coat != null ? coat : 0.7, clearcoatRoughness: 0.18,
+    }));
+  }
   geo(g) { return this.track(g); }
+  // Shared procedural texture (tracked so it is released with the scene).
+  canvasTex(canvas, repeatX, repeatY, color) {
+    const tex = this.track(new THREE.CanvasTexture(canvas));
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(repeatX, repeatY);
+    tex.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    if (color) tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  // Fit the key light's orthographic shadow box tightly around the room's bounds.
+  fitShadow(light, min, max) {
+    const cam = new THREE.OrthographicCamera();
+    cam.position.copy(light.position);
+    cam.lookAt(light.target.position);
+    cam.updateMatrixWorld(true);
+    const inv = cam.matrixWorldInverse;
+    const lo = new THREE.Vector3(Infinity, Infinity, Infinity), hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z).applyMatrix4(inv);
+      lo.min(v); hi.max(v);
+    }
+    const sc = light.shadow.camera;
+    sc.left = lo.x - 0.2; sc.right = hi.x + 0.2; sc.bottom = lo.y - 0.2; sc.top = hi.y + 0.2;
+    sc.near = Math.max(0.1, -hi.z - 0.5); sc.far = -lo.z + 0.5;
+    sc.updateProjectionMatrix();
+  }
 
   buildRoom(theme, decoSeed) {
     const t = theme;
+    const detailed = this.q.detail === 'detailed';
     this.scene.background = new THREE.Color(t.fog);
     this.scene.fog = new THREE.Fog(t.fog, 22, 46);
 
     // lighting: one dominant warm key + soft fill + hemisphere ambience
     const hemi = new THREE.HemisphereLight(t.fill, 0x4a3a28, t.ambient * 1.6);
     this.scene.add(hemi);
+    this.hemi = hemi;
+    this.hemiBase = hemi.intensity;
     const key = new THREE.DirectionalLight(t.key, 2.4);
     key.position.set(6, 9, 7);
-    key.castShadow = this.tier.shadows;
+    key.target.position.set(0, 1.5, -0.5);
+    this.scene.add(key.target);
     key.shadow.mapSize.set(1024, 1024);
-    key.shadow.camera.left = -10; key.shadow.camera.right = 10;
-    key.shadow.camera.top = 10; key.shadow.camera.bottom = -10;
-    key.shadow.bias = -0.0004;
+    key.shadow.bias = -0.0003;
+    key.shadow.normalBias = 0.02;
+    this.fitShadow(key, new THREE.Vector3(-6.5, -0.3, -4.5), new THREE.Vector3(6.5, 6.4, 4.5));
     this.scene.add(key);
     this.keyLight = key;
+    this._applyShadows();
     // warm interior fill so the miniature room reads even on dim themes
     const lamp = new THREE.PointLight(0xffe0b0, 30, 30, 1.8);
     lamp.position.set(0, 5.2, 1.5);
     this.scene.add(lamp);
 
+    const rng = R.mulberry32(decoSeed);
+    const woodA = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0x51, 0), 2, 1, true) : null;
+    const floorTex = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0xf1, 4), 3, 2, true) : null;
+
     // floor + two walls (miniature room, open dollhouse front)
-    const floor = new THREE.Mesh(this.geo(new THREE.BoxGeometry(13, 0.3, 9)), this.mat(t.floor, 0.9));
+    const floor = new THREE.Mesh(this.geo(new THREE.BoxGeometry(13, 0.3, 9)), this.mat(t.floor, detailed ? 0.72 : 0.9, 0.05, floorTex ? { map: floorTex } : null));
     floor.position.y = -0.15; floor.receiveShadow = true;
     this.scene.add(floor);
     const back = new THREE.Mesh(this.geo(new THREE.BoxGeometry(13, 6.4, 0.3)), this.mat(t.wall, 0.95));
@@ -615,7 +1012,6 @@ class NookRenderer {
     this.applyWallpaper([back.material, left.material]);
 
     // plank grooves on floor
-    const rng = R.mulberry32(decoSeed);
     const plankMat = this.mat(new THREE.Color(t.floor).multiplyScalar(0.8).getHex(), 0.95);
     for (let i = 0; i < 6; i++) {
       const groove = new THREE.Mesh(this.geo(new THREE.BoxGeometry(13, 0.02, 0.05)), plankMat);
@@ -624,7 +1020,8 @@ class NookRenderer {
     }
 
     // back-wall shelves
-    const shelfMat = this.mat(0x6b4a2f, 0.8);
+    const woodExtra = woodA ? { map: woodA } : null;
+    const shelfMat = this.mat(0x6b4a2f, detailed ? 0.62 : 0.8, 0.05, woodExtra);
     for (const y of [2.2, 3.6]) {
       const shelf = new THREE.Mesh(this.geo(new THREE.BoxGeometry(11, 0.16, 1.2)), shelfMat);
       shelf.position.set(0, y - 0.55, -3.6);
@@ -632,45 +1029,74 @@ class NookRenderer {
       this.scene.add(shelf);
     }
     // side table + crates + rug
-    const table = new THREE.Mesh(this.geo(new THREE.BoxGeometry(6.4, 0.18, 1.8)), this.mat(0x74543a, 0.75));
+    const table = new THREE.Mesh(this.geo(new THREE.BoxGeometry(6.4, 0.18, 1.8)),
+      detailed ? this.track(new THREE.MeshPhysicalMaterial({ color: 0x74543a, roughness: 0.55, metalness: 0.02, clearcoat: 0.35, clearcoatRoughness: 0.35, map: woodA }))
+        : this.mat(0x74543a, 0.75));
     table.position.set(0, 0.82, 0.6); table.castShadow = table.receiveShadow = true;
     this.scene.add(table);
     for (const x of [-2.6, 2.6]) {
       const leg = new THREE.Mesh(this.geo(new THREE.BoxGeometry(0.22, 0.82, 0.22)), shelfMat);
       leg.position.set(x, 0.41, 0.6);
+      leg.castShadow = detailed;
       this.scene.add(leg);
     }
+    const crateTex = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0xc7, 3), 1, 1, true) : null;
+    const crateMat = this.mat(0x7a5c3a, 0.85, 0.05, crateTex ? { map: crateTex } : null);
     for (let i = 0; i < 3; i++) {
-      const crate = new THREE.Mesh(this.geo(new THREE.BoxGeometry(1.1, 0.9, 1.1)), this.mat(0x7a5c3a, 0.85));
+      const crate = new THREE.Mesh(this.geo(new THREE.BoxGeometry(1.1, 0.9, 1.1)), crateMat);
       crate.position.set(-2 + i * 2, 0.45, -0.2);
       crate.rotation.y = (rng() - 0.5) * 0.4;
       crate.castShadow = crate.receiveShadow = true;
       this.scene.add(crate);
     }
-    const rug = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(2.6, 2.6, 0.04, 40)), this.mat(0x7a3a44, 0.98));
+    const rugTex = detailed ? this.canvasTex(rugTexture(), 1, 1, true) : null;
+    const rug = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(2.6, 2.6, 0.04, detailed ? 64 : 40)),
+      this.mat(0x7a3a44, 0.98, 0, rugTex ? { map: rugTex } : null));
     rug.position.set(0, 0.02, 1.8);
     rug.receiveShadow = true;
     this.scene.add(rug);
+
+    if (detailed) this.buildTrim(t);
 
     // animated details: candle flame, wall-clock pendulum, dust motes
     const candle = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 12)), this.mat(0xf0e6c8, 0.6));
     candle.position.set(5.4, 4.0, -3.6);
     this.scene.add(candle);
+    // flame colour above 1.0 so the bloom pass picks it up (tone mapping keeps it warm)
     this.flame = new THREE.Mesh(this.geo(new THREE.ConeGeometry(0.06, 0.2, 10)),
-      this.track(new THREE.MeshBasicMaterial({ color: 0xffc65c })));
+      this.track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffc65c).multiplyScalar(detailed ? 6 : 1) })));
     this.flame.position.set(5.4, 4.36, -3.6);
     this.scene.add(this.flame);
-    const clockBody = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 24)), this.mat(0x8a6a3a, 0.6, 0.3));
+    if (detailed) {
+      // candle glow that flickers with the flame
+      this.candleLight = new THREE.PointLight(0xffb45a, 4, 5, 2);
+      this.candleLight.position.set(5.4, 4.5, -3.3);
+      this.scene.add(this.candleLight);
+    }
+    const clockBody = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 24)), this.gloss(0x8a6a3a, 0.45, 0.3, 0.5));
     clockBody.rotation.x = Math.PI / 2;
     clockBody.position.set(-5.2, 4.6, -4.1);
     this.scene.add(clockBody);
-    this.pendulum = new THREE.Mesh(this.geo(new THREE.BoxGeometry(0.05, 0.8, 0.05)), this.mat(0xd4af37, 0.4, 0.6));
+    if (detailed) {
+      const face = new THREE.Mesh(this.geo(new THREE.CircleGeometry(0.4, 32)), this.mat(0xf2ead6, 0.5));
+      face.position.set(-5.2, 4.6, -4.03);
+      this.scene.add(face);
+      const tickMat = this.mat(0x2b2118, 0.6);
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2;
+        const tick = new THREE.Mesh(this.geo(new THREE.BoxGeometry(0.03, k % 3 ? 0.05 : 0.09, 0.01)), tickMat);
+        tick.position.set(-5.2 + Math.sin(a) * 0.33, 4.6 + Math.cos(a) * 0.33, -4.02);
+        tick.rotation.z = -a;
+        this.scene.add(tick);
+      }
+    }
+    this.pendulum = new THREE.Mesh(this.geo(new THREE.BoxGeometry(0.05, 0.8, 0.05)), this.gloss(0xd4af37, 0.3, 0.8, 0.4));
     this.pendulum.geometry.translate(0, -0.4, 0);
     this.pendulum.position.set(-5.2, 4.2, -4.05);
     this.scene.add(this.pendulum);
 
-    // dust particles (cosmetic layer — never raycastable)
-    const n = this.tier.particles;
+    // dust particles (cosmetic layer — never raycastable): soft additive motes
+    const n = PARTICLE_COUNT[this.q.particles];
     const pos = new Float32Array(n * 3);
     const prng = R.mulberry32(decoSeed ^ 0xd157);
     for (let i = 0; i < n; i++) {
@@ -680,11 +1106,53 @@ class NookRenderer {
     }
     const pgeo = this.track(new THREE.BufferGeometry());
     pgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const moteTex = this.track(new THREE.CanvasTexture(moteTexture()));
     this.particles = new THREE.Points(pgeo, this.track(new THREE.PointsMaterial({
-      color: 0xfff2cc, size: 0.05, transparent: true, opacity: 0.5, sizeAttenuation: true,
+      color: 0xffeccc, size: 0.09, map: moteTex, transparent: true, opacity: 0.4, depthWrite: false,
+      blending: THREE.AdditiveBlending, sizeAttenuation: true,
     })));
     this.particles.userData.base = pos.slice();
     this.scene.add(this.particles);
+  }
+
+  // "detailed" room trim: skirting boards, a picture rail, a framed print and a small window.
+  // Wall-mounted only, above or beside every item anchor, so nothing new occludes a find.
+  buildTrim(t) {
+    const trimMat = this.mat(new THREE.Color(t.wall).lerp(new THREE.Color(0xf0e2c8), 0.55).getHex(), 0.55);
+    const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(this.geo(geo), mat); m.position.set(x, y, z); m.receiveShadow = true; this.scene.add(m); return m; };
+    add(new THREE.BoxGeometry(13, 0.32, 0.08), trimMat, 0, 0.16, -4.18);          // back skirting
+    add(new THREE.BoxGeometry(0.08, 0.32, 9), trimMat, -6.18, 0.16, 0);           // left skirting
+    add(new THREE.BoxGeometry(13, 0.1, 0.07), trimMat, 0, 4.25, -4.18);            // picture rail
+    add(new THREE.BoxGeometry(0.07, 0.1, 9), trimMat, -6.18, 4.25, 0);
+    add(new THREE.BoxGeometry(13, 0.22, 0.14), trimMat, 0, 6.29, -4.14);          // crown
+    // framed print above the shelves
+    const frame = this.gloss(0x5a3b22, 0.4, 0.1, 0.5);
+    add(new THREE.BoxGeometry(2.3, 1.35, 0.06), frame, 1.4, 5.15, -4.17);
+    const art = this.canvasTex((() => {
+      const c = document.createElement('canvas'); c.width = 128; c.height = 76;
+      const g = c.getContext('2d');
+      const sky = g.createLinearGradient(0, 0, 0, 76);
+      sky.addColorStop(0, '#f3d9a8'); sky.addColorStop(1, '#c98f6a');
+      g.fillStyle = sky; g.fillRect(0, 0, 128, 76);
+      g.fillStyle = '#7d6a8a'; g.beginPath(); g.moveTo(0, 60); g.lineTo(34, 30); g.lineTo(62, 52); g.lineTo(92, 24); g.lineTo(128, 56); g.lineTo(128, 76); g.lineTo(0, 76); g.fill();
+      g.fillStyle = '#4c5a48'; g.fillRect(0, 62, 128, 14);
+      g.fillStyle = '#fff4d8'; g.beginPath(); g.arc(98, 18, 7, 0, Math.PI * 2); g.fill();
+      return c;
+    })(), 1, 1, true);
+    art.wrapS = art.wrapT = THREE.ClampToEdgeWrapping;
+    add(new THREE.PlaneGeometry(2.05, 1.12), this.mat(0xffffff, 0.8, 0, { map: art }), 1.4, 5.15, -4.13);
+    // small window on the left wall: frame, glowing pane and sill
+    const pane = this.track(new THREE.MeshStandardMaterial({
+      color: 0x1a1a1a, emissive: new THREE.Color(t.key).lerp(new THREE.Color(t.fill), 0.35), emissiveIntensity: 2.4, roughness: 0.2,
+    }));
+    const win = add(new THREE.PlaneGeometry(1.8, 1.5), pane, -6.19, 5.1, 1.2);
+    win.rotation.y = Math.PI / 2;
+    add(new THREE.BoxGeometry(0.1, 1.64, 0.08), frame, -6.16, 5.1, 1.2);        // mullion
+    add(new THREE.BoxGeometry(0.1, 0.08, 1.9), frame, -6.16, 5.1, 1.2);         // transom
+    add(new THREE.BoxGeometry(0.1, 1.66, 0.1), frame, -6.16, 5.1, 0.25);
+    add(new THREE.BoxGeometry(0.1, 1.66, 0.1), frame, -6.16, 5.1, 2.15);
+    add(new THREE.BoxGeometry(0.1, 0.1, 2.0), frame, -6.16, 5.9, 1.2);
+    add(new THREE.BoxGeometry(0.26, 0.08, 2.1), trimMat, -6.1, 4.32, 1.2);       // sill
   }
 
   // Async, best-effort: a decoded wallpaper tile multiplies the flat wall colour.
@@ -716,9 +1184,11 @@ class NookRenderer {
       g.add(mesh);
       return mesh;
     };
-    const body = this.mat(color, 0.55, 0.15);
+    // glazed / lacquered kinds get a clearcoat at "detailed"; metal kinds a polished coat
+    const glazed = /^(mug|teapot|bottle|shell|button|jar|book)$/.test(kind);
+    const body = glazed ? this.gloss(color, 0.42, 0.05, 0.8) : this.mat(color, 0.55, 0.15);
     const dark = this.mat(new THREE.Color(color).multiplyScalar(0.55).getHex(), 0.7, 0.1);
-    const metal = this.mat(color, 0.35, 0.7);
+    const metal = this.gloss(color, 0.3, 0.75, 0.35);
     switch (kind) {
       case 'mug':
         m(new THREE.CylinderGeometry(0.32, 0.28, 0.55, 20), body, 0, 0.28, 0);
@@ -731,11 +1201,11 @@ class NookRenderer {
         break;
       case 'book':
         m(new THREE.BoxGeometry(0.55, 0.14, 0.75), body, 0, 0.07, 0);
-        m(new THREE.BoxGeometry(0.5, 0.12, 0.7), this.mat(0xf0ead8, 0.9), 0.03, 0.08, 0);
+        m(new THREE.BoxGeometry(0.5, 0.12, 0.7), this.mat(0xf0ead8, 0.9), 0.03, 0.074, 0); // pages sit under the cover (no coplanar z-fight)
         break;
       case 'candle':
         m(new THREE.CylinderGeometry(0.14, 0.16, 0.6, 14), body, 0, 0.3, 0);
-        m(new THREE.ConeGeometry(0.05, 0.14, 8), this.track(new THREE.MeshBasicMaterial({ color: 0xffc65c })), 0, 0.66, 0);
+        m(new THREE.ConeGeometry(0.05, 0.14, 8), this.track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffc65c).multiplyScalar(this.q.detail === 'detailed' ? 5 : 1) })), 0, 0.66, 0);
         break;
       case 'spool':
         m(new THREE.CylinderGeometry(0.16, 0.16, 0.34, 14), body, 0, 0.2, 0);
@@ -789,7 +1259,7 @@ class NookRenderer {
         break;
       case 'lantern':
         m(new THREE.CylinderGeometry(0.2, 0.24, 0.4, 8), dark, 0, 0.28, 0);
-        m(new THREE.CylinderGeometry(0.14, 0.14, 0.24, 8), this.track(new THREE.MeshStandardMaterial({ color: 0xffd98a, emissive: 0x8a6a20, roughness: 0.4 })), 0, 0.28, 0);
+        m(new THREE.CylinderGeometry(0.14, 0.14, 0.24, 8), this.track(new THREE.MeshStandardMaterial({ color: 0xffd98a, emissive: 0xffb84a, emissiveIntensity: this.q.detail === 'detailed' ? 3.5 : 0.55, roughness: 0.4 })), 0, 0.28, 0);
         m(new THREE.TorusGeometry(0.12, 0.025, 8, 14, Math.PI), metal, 0, 0.52, 0);
         break;
       case 'pinecone':
@@ -821,7 +1291,7 @@ class NookRenderer {
       // grounded selection ring marker
       const ring = new THREE.Mesh(
         this.geo(new THREE.RingGeometry(0.42, 0.55, 28)),
-        this.track(new THREE.MeshBasicMaterial({ color: 0xffb84d, transparent: true, opacity: 0, side: THREE.DoubleSide }))
+        this.track(new THREE.MeshBasicMaterial({ color: 0xffb84d, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }))
       );
       ring.rotation.x = -Math.PI / 2;
       ring.position.set(it.pos[0], Math.max(0.03, it.pos[1] + 0.02), it.pos[2]);
@@ -836,6 +1306,7 @@ class NookRenderer {
   load(level) {
     this.disposeScene();
     const theme = C.THEMES.find((t) => t.id === level.theme) || C.THEMES[0];
+    this.level = level;
     this.levelSeed = level.seed;
     this.reduced = Settings.get('reducedMotion');
     this.buildRoom(theme, level.seed ^ 0xdec0);
@@ -854,6 +1325,7 @@ class NookRenderer {
         this.flame.scale.set(1 + Math.sin(t * 11) * 0.15, 1 + Math.sin(t * 13.7) * 0.25, 1);
       }
       if (this.pendulum) this.pendulum.rotation.z = Math.sin(t * 2.2) * 0.35;
+      if (this.candleLight) this.candleLight.intensity = 4 + Math.sin(t * 11) * 0.6 + Math.sin(t * 23.3) * 0.4;
       if (this.particles) {
         const p = this.particles.geometry.attributes.position;
         const base = this.particles.userData.base;
@@ -873,11 +1345,13 @@ class NookRenderer {
       const isFocus = i === this.focusIndex;
       const want = v.found ? 0.9 : (v.hinted ? 0.55 + Math.sin(t * 5) * 0.3 : (isFocus ? 0.75 : 0));
       v.ring.material.opacity += (want - v.ring.material.opacity) * Math.min(1, dt * 10);
+      // a faded ring must not reach the depth/normal buffers (AO would draw a dark halo)
+      v.ring.visible = v.ring.material.opacity > 0.01;
       v.ring.material.color.setHex(v.found ? 0x7dd87d : 0xffb84d);
       if (v.found) v.group.rotation.y += this.reduced ? 0 : dt * 0.6;
     }
     this.applyCamera();
-    this.renderer.render(this.scene, this.camera);
+    this.draw(dt);
   }
 
   // ---- camera ----------------------------------------------------------------
@@ -1126,7 +1600,7 @@ const Game = {
       UI.setStatus('WebGL unavailable');
       return;
     }
-    this.renderer.applyQuality(Settings.get('quality'));
+    this.renderer.setGraphics(Settings.get('graphics'));
     this.renderer.onTap = (idx) => this.handleTap(idx);
     this.renderer.onCameraMove = () => { if (this.tutorialStep === 0 && this.phase === 'active') this.advanceTutorial('pan'); };
 
@@ -1824,11 +2298,7 @@ const Game = {
       <div class="hn-field"><label for="set-music">Music</label><input id="set-music" type="range" min="0" max="1" step="0.05" value="${s.music}"></div>
       <div class="hn-field"><label for="set-sfx">Effects</label><input id="set-sfx" type="range" min="0" max="1" step="0.05" value="${s.sfx}"></div>
       <div class="hn-field"><label for="set-amb">Ambience</label><input id="set-amb" type="range" min="0" max="1" step="0.05" value="${s.ambience}"></div>
-      <h3>Graphics</h3>
-      <div class="hn-field"><label for="set-quality">Quality tier</label>
-        <select id="set-quality">
-          ${['auto', 'high', 'medium', 'low'].map((q) => `<option value="${q}" ${s.quality === q ? 'selected' : ''}>${q}</option>`).join('')}
-        </select></div>
+      <section id="gfx-section" class="hn-gfx" aria-labelledby="gfx-heading">${this.gfxSectionHtml()}</section>
       <h3>Accessibility</h3>
       <div class="hn-field"><label for="set-rm">Reduced motion</label><input id="set-rm" type="checkbox" ${s.reducedMotion ? 'checked' : ''}></div>
       <div class="hn-field"><label for="set-hc">High contrast</label><input id="set-hc" type="checkbox" ${s.highContrast ? 'checked' : ''}></div>
@@ -1840,12 +2310,12 @@ const Game = {
     `, { label: 'Settings' });
     const bind = (id, key, isCheck) => {
       panel.querySelector('#' + id).addEventListener(isCheck ? 'change' : 'input', (ev) => {
-        Settings.set(key, isCheck ? ev.target.checked : (id === 'set-quality' ? ev.target.value : Number(ev.target.value)));
+        Settings.set(key, isCheck ? ev.target.checked : Number(ev.target.value));
         if (key === 'reducedMotion') this.renderer.reduced = Settings.get('reducedMotion');
       });
     };
     bind('set-music', 'music'); bind('set-sfx', 'sfx'); bind('set-amb', 'ambience');
-    bind('set-quality', 'quality');
+    this.bindGfxSection(panel);
     bind('set-rm', 'reducedMotion', true); bind('set-hc', 'highContrast', true);
     bind('set-lt', 'largeText', true); bind('set-lh', 'leftHanded', true);
     bind('set-hap', 'haptics', true); bind('set-tel', 'telemetryConsent', true);
@@ -1853,9 +2323,82 @@ const Game = {
       if (ev.target.closest('[data-act="done"]')) {
         Audio.play('click');
         if (inRound) this.pause(); // back to pause menu
+        else if (this.phase === 'title') this.toTitle(); // back to the main menu, not an empty room
         else UI.closeOverlay();
       }
     });
+  },
+
+  // ---- Settings → Graphics (gfx.js model; strings from gfx-i18n.js) ---------------
+  gfxSectionHtml() {
+    const L = gfxStrings(navigator.languages || [navigator.language]);
+    const saved = Settings.get('graphics') || {};
+    const r = this.renderer;
+    const g = resolve(saved, r.detected);
+    const esc = UI.esc;
+    const presetOpts = [['auto', L.auto.replace('{tier}', L[r.detected])]]
+      .concat(PRESETS.map((p) => [p, L[p]]))
+      .map(([v, label]) => `<option value="${v}" ${(saved.preset || 'auto') === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
+    const scale = Math.round(g.userScale * 100);
+    const cats = Object.entries(CATEGORIES).map(([cat, tiers]) => {
+      const cur = tiers.includes(saved[cat]) ? saved[cat] : 'preset';
+      const opts = [['preset', L.fromPreset.replace('{tier}', L.tier[presetTier(g.preset, cat)])]]
+        .concat(tiers.map((tv) => [tv, L.tier[tv]]))
+        .map(([v, label]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
+      return `<div class="hn-field"><label for="set-gfx-${cat}">${esc(L.cat[cat])}</label><select id="set-gfx-${cat}" data-gfx-cat="${cat}">${opts}</select></div>`;
+    }).join('');
+    return `
+      <h3 id="gfx-heading">${esc(L.graphics)}</h3>
+      <div class="hn-field"><label for="set-quality">${esc(L.quality)}</label><select id="set-quality" data-gfx="preset">${presetOpts}</select></div>
+      <div class="hn-field hn-field-range"><label for="set-gfx-scale">${esc(L.renderScale)}</label>
+        <span class="hn-range-wrap"><input id="set-gfx-scale" data-gfx="render_scale" type="range" min="50" max="200" step="5" value="${scale}"><output id="set-gfx-scale-val" for="set-gfx-scale">${scale}%</output></span></div>
+      ${cats}
+      <div class="hn-field"><label for="set-gfx-adaptive">${esc(L.adaptive)}</label><input id="set-gfx-adaptive" data-gfx="adaptive" type="checkbox" ${g.adaptive ? 'checked' : ''}></div>
+      <div class="hn-field"><label for="set-gfx-fps">${esc(L.showFps)}</label><input id="set-gfx-fps" data-gfx="show_fps" type="checkbox" ${g.showFps ? 'checked' : ''}></div>
+      <p id="gfx-summary" class="hn-gfx-summary rail-sub" aria-live="off"></p>
+      <p id="gfx-post-note" class="hn-gfx-note" hidden>${esc(L.postUnavailable)}</p>`;
+  },
+
+  bindGfxSection(panel) {
+    const sec = panel.querySelector('#gfx-section');
+    if (!sec) return;
+    const L = gfxStrings(navigator.languages || [navigator.language]);
+    const save = (next) => Settings.set('graphics', next);
+    const refreshInfo = () => {
+      const sum = document.getElementById('gfx-summary');
+      if (!sum) { clearInterval(this._gfxTimer); this._gfxTimer = null; return; }
+      const info = this.renderer.graphicsInfo(L.words);
+      const text = `${info.gpu || L.unknownGpu} · ${info.summary}`;
+      if (sum.textContent !== text) sum.textContent = text;
+      document.getElementById('gfx-post-note').hidden = !info.postFailed;
+    };
+    sec.addEventListener('change', (ev) => {
+      const el = ev.target;
+      const saved = Object.assign({}, Settings.get('graphics') || {});
+      if (el.id === 'set-quality') {
+        // choosing a preset clears per-category overrides; re-render the "From preset" labels
+        save(choosePreset(saved, el.value));
+        sec.innerHTML = this.gfxSectionHtml();
+        sec.querySelector('#set-quality').focus();
+      } else if (el.dataset.gfxCat) {
+        if (el.value === 'preset') delete saved[el.dataset.gfxCat];
+        else saved[el.dataset.gfxCat] = el.value;
+        save(saved);
+      } else if (el.dataset.gfx === 'adaptive' || el.dataset.gfx === 'show_fps') {
+        saved[el.dataset.gfx] = el.checked;
+        save(saved);
+      } else if (el.dataset.gfx === 'render_scale') {
+        saved.render_scale = Number(el.value) / 100;
+        save(saved);
+      }
+      refreshInfo();
+    });
+    sec.addEventListener('input', (ev) => {
+      if (ev.target.id === 'set-gfx-scale') sec.querySelector('#set-gfx-scale-val').textContent = ev.target.value + '%';
+    });
+    clearInterval(this._gfxTimer);
+    this._gfxTimer = setInterval(refreshInfo, 500);
+    requestAnimationFrame(refreshInfo);
   },
 
   showHelp(inRound) {
@@ -1881,6 +2424,7 @@ const Game = {
       if (ev.target.closest('[data-act="done"]')) {
         Audio.play('click');
         if (inRound) this.pause();
+        else if (this.phase === 'title') this.toTitle();
         else UI.closeOverlay();
       }
     });

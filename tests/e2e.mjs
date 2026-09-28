@@ -126,7 +126,7 @@ async function runPass(browser, vpName, contextOpts) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {
-    if (m.type() !== 'error') return;
+    if (m.type() !== 'error' && m.type() !== 'warning') return;
     if (browserNoise.test(m.text())) return;
     // Platform.syncTime() and other API probes fall back to offline mode by
     // design; any console noise tagged to /api/ routes is logged by the real
@@ -144,6 +144,47 @@ async function runPass(browser, vpName, contextOpts) {
       const heading = await overlayHeading(page).textContent();
       if (!/Hidden Nook/.test(heading)) throw new Error(`unexpected overlay heading: ${heading}`);
       await page.screenshot({ path: SHOT('title', vpName) });
+    });
+
+    // Settings → Graphics through the visible panel: preset Low then High, one per-category
+    // override, applied live (data-gfx-preset + cost summary) and persisted across a reload.
+    await step('graphics settings: presets, override, persistence', async () => {
+      const openSettings = async () => {
+        await page.locator('#btn-settings').click();
+        await page.waitForSelector('#overlay-root #gfx-section #set-quality');
+      };
+      const presetIs = (p) => page.waitForFunction((want) => document.body.dataset.gfxPreset === want
+        && window.__hnRenderer.canvas.dataset.gfxPreset === want, p, { timeout: 5000 });
+      await openSettings();
+      const autoLabel = await page.locator('#set-quality option[value="auto"]').textContent();
+      if (!/Auto \(detected: Low\)/.test(autoLabel)) throw new Error(`unexpected auto label: ${autoLabel}`);
+      await page.selectOption('#set-quality', 'low');
+      await presetIs('low');
+      await page.waitForFunction(() => /no shadows/.test(document.getElementById('gfx-summary').textContent));
+      await page.selectOption('#set-quality', 'high');
+      await presetIs('high');
+      await page.waitForFunction(() => /2048² shadows/.test(document.getElementById('gfx-summary').textContent)
+        && / bloom/.test(document.getElementById('gfx-summary').textContent));
+      if (!/From preset \(On\)/.test(await page.locator('#set-gfx-bloom option[value="preset"]').textContent())) {
+        throw new Error('bloom select does not show the preset tier');
+      }
+      await page.selectOption('#set-gfx-bloom', 'off');
+      await page.waitForFunction(() => !/ bloom/.test(document.getElementById('gfx-summary').textContent));
+      await page.locator('#gfx-section').screenshot({ path: SHOT('graphics-panel', vpName) });
+      await page.locator('#overlay-root button[data-act="done"]').click();
+
+      await page.reload({ waitUntil: 'load' });
+      await overlayHeading(page).waitFor({ timeout: 15000 });
+      await presetIs('high');
+      await openSettings();
+      if (await page.inputValue('#set-quality') !== 'high') throw new Error('preset did not persist');
+      if (await page.inputValue('#set-gfx-bloom') !== 'off') throw new Error('bloom override did not persist');
+      // choosing a preset clears overrides; go back to Auto (Low on the software GPU) for speed
+      await page.selectOption('#set-quality', 'auto');
+      await presetIs('low');
+      if (await page.inputValue('#set-gfx-bloom') !== 'preset') throw new Error('preset change did not clear the override');
+      await page.locator('#overlay-root button[data-act="done"]').click();
+      await page.waitForSelector('#overlay-root button[data-act="practice"]');
     });
 
     await step('practice setup (easy, fixed seed)', async () => {

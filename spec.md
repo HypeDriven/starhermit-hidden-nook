@@ -18,7 +18,7 @@ candle burns down.
 | Players | 1; asynchronous competition through the daily leaderboard |
 | Session | 90 s (early journey stage) to ~4 min (late stage); a daily run is one round |
 | Platforms | Desktop and mobile browsers, portrait and landscape; WebGL2 required |
-| Rendering | Three.js (`vendor/three.module.js`, r-series ES module) drawing a fully procedural scene — no meshes, textures or sprites are loaded for gameplay geometry; every object is built at runtime from primitives in `NookRenderer.buildItemMesh` |
+| Rendering | Three.js r185 (`vendor/three.module.js` + `three.core.js`, release 0.185.1; post-processing and environment addons from the same release under `vendor/three/addons/`, mapped by an import map) drawing a fully procedural scene — no meshes, textures or sprites are loaded for gameplay geometry; every object is built at runtime from primitives in `NookRenderer.buildItemMesh` |
 | Persistence | `localStorage` (checksummed) is the offline cache; on-platform the same document mirrors to the StarHermit cloud-save slot |
 | Build id | `BUILD = '1.0.0'` in `game.js`; content schema `CONTENT_VERSION = 2`; rules schema `SCHEMA_VERSION = 2` |
 
@@ -26,14 +26,18 @@ candle burns down.
 
 | Path | Responsibility |
 |---|---|
-| `index.html` | Static shell: topbar, left rail (requests + progress), canvas holder, right rail (score + actions + object list), bottom tray, two ARIA live regions. Loads `rules.js` and `content.js` as classic scripts, then `game.js` as a module. |
+| `index.html` | Static shell: topbar, left rail (requests + progress), canvas holder, right rail (score + actions + object list), bottom tray, two ARIA live regions. Loads `rules.js` and `content.js` as classic scripts, then `game.js` as a module; an import map resolves `three` and `three/addons/`. |
 | `style.css` | All presentation: token palette, three responsive layouts, high-contrast / large-text / reduced-motion variants, safe-area insets. |
 | `rules.js` | Pure deterministic rules engine (UMD → `window.HNRules` / `require`). Owns every state transition. |
 | `content.js` | Versioned content (UMD → `window.HNContent`): object vocabulary, themes, anchors, procedural level generation, tutorial script, offline validators. |
-| `game.js` | Client: `Platform`, `Settings`, `Progress`, `Audio`, `NookRenderer`, `UI`, `Game` state machine. |
+| `game.js` | Client: `Platform`, `Settings`, `Progress`, `Audio`, `NookRenderer` (scene, graphics settings, post chain), `UI`, `Game` state machine (incl. the Settings → Graphics section). |
+| `gfx.js` | Pure graphics quality model: presets, categories, GPU detection (`detectPreset`), `resolve`, `presetTier`, `choosePreset`, `describe`. No three.js import. |
+| `gfx-i18n.js` | Settings → Graphics strings in the nine target locales and `pickLocale`. |
+| `vendor/three/addons/` | three.js 0.185.1 addons: `EffectComposer`, `RenderPass`, `ShaderPass`, `OutputPass`, `GTAOPass`, `UnrealBloomPass`, `SMAAPass`, their shaders, `FXAAShader`, `RoomEnvironment`. Loaded with dynamic `import()` only when a preset needs them. |
 | `server.js` | Static file server plus the game's REST surface (time, daily, submit, leaderboard, save, achievements, telemetry). |
 | `test.js` | `npm test` — 30 checks: rules legality, scoring, replay determinism, fuzz, content validation, migration, golden hashes, server API. |
 | `tests/e2e.mjs` | `npm run test:e2e` — Playwright playthrough of the real UI at desktop and mobile viewports. |
+| `tests/gfx.test.mjs` | `node --test` unit tests for `gfx.js` and `gfx-i18n.js` (run by `npm test`). |
 | `sfx/` | 16 Opus one-shots, `manifest.txt` (canonical), `manifest.json` (generator input), `manifest.md` (generated table). |
 | `assets/` | `keyart-nook.webp` (title backdrop), `wall-paper.webp` (room wall tile). |
 | `data/store.json` | Server-side durable store: daily boards, saves, achievements. Never served. |
@@ -287,7 +291,8 @@ boot → title ─┬→ mode-select ─┬→ (journey grid | practice setup | 
 Every non-play screen is one modal `.hn-overlay` inside `#overlay-root`, with
 `role="dialog" aria-modal="true"`, a Tab focus trap, first-element autofocus, and focus restored to
 the previously focused element on close. The pause menu is re-entrant: Settings and Help opened from
-it return to it when Done is pressed, rather than dumping the player into the round.
+it return to it when Done is pressed, rather than dumping the player into the round. Opened from the
+title, they return to the title menu.
 
 **Desktop (≥1024 px).** Three columns: 240 px request rail | flexible canvas | 240 px score rail;
 topbar above, bottom tray hidden.
@@ -332,22 +337,67 @@ for the swatch on the request chip, so the word, the swatch and the object alway
 ring primitives at miniature scale (0.8–1.3× per item). Rounded, chunky, hand-made — no sharp
 photoreal detail, so a 60-px object on a phone still reads as "teapot".
 
-**Lighting.** One dominant warm directional key at `(6, 9, 7)` with a 1024² PCF shadow map, a
+**Lighting.** One dominant warm directional key at `(6, 9, 7)` aimed at `(0, 1.5, -0.5)`, whose
+PCF shadow box is fitted to the room's bounds in light space (1024²/2048²/4096² by setting), a
 hemisphere fill tinted by the theme, and an interior point lamp at `(0, 5.2, 1.5)` so even the Night
 theme keeps the shelves legible. ACES filmic tone mapping at exposure 1.35, sRGB output, and a fog
 band from 22 to 46 units that lets the room's edges fall into the case.
+
+**Graphics.** On top of that base, the room gains, per setting: image-based lighting from a
+`RoomEnvironment` PMREM as `scene.environment` (intensity 0.45; the hemisphere fill drops to 70%
+while it is on) so glazed and metal pieces pick up soft reflections; clearcoat
+`MeshPhysicalMaterial` on glazed kinds (mug, teapot, bottle, shell, button, jar, book), metal kinds
+(key, clock, bell, thimble, coin, lantern frame), the clock and the lacquered table; procedural
+canvas textures — wood grain with knots on the floor (with plank seams), shelves, table and crates,
+and a woven ring pattern on the rug; wall trim (skirting, picture rail, crown), a framed landscape
+print above the shelves, a glowing window on the left wall, a clock face with hour ticks, and a
+candle glow light that flickers with the flame. All added decoration is wall-mounted above or
+beside every item anchor, is never pickable and never occludes a find. Dust motes are soft additive
+sprites (100 or 700). Post-processing (three's `EffectComposer`): RenderPass → GTAO contact
+shadows → UnrealBloom limited to HDR values above 2.2 (flames, the lantern, the window, hot glints)
+→ OutputPass (tone mapping + sRGB) → a colour grade (gentle S-curve, +10% saturation, warm
+highlights / cool shadows, soft vignette) → SMAA or FXAA; MSAA uses a 4-sample half-float target.
+Selection rings are hidden while fully faded so they never reach the AO depth/normal pass. The
+Settings panel's **Graphics** section offers: **Quality** — Auto (detected: <tier>), chosen from the
+unmasked WebGL renderer string, where software renderers (SwiftShader, llvmpipe) get Low, discrete
+GPUs and Apple M-series get High, anything else Balanced, and touch devices cap at Balanced; Low;
+Balanced; High; Ultra; a **Render scale** slider (50–200%); one select per category — Shadows
+(off/low/medium/high), Ambient occlusion (off/on/high), Glow (bloom) (off/on), Color grade (off/on),
+Anti-aliasing (off/FXAA/SMAA/MSAA), Reflections (off/on), Dust motes (low/high) and Room detail
+(plain/detailed) — each defaulting to "From preset (<tier>)"; **Adaptive resolution** (on by
+default: every 90 frames, an average above 26 ms steps the scale down by 0.1 to a floor of 0.6,
+below 14 ms back up by 0.05 to 1); **Show frame rate** (a bottom-left readout that never takes
+pointer input); and a summary line "GPU · cost summary · W×H px". Choosing a preset clears the
+category overrides (render scale, adaptive and frame-rate choices stay). Every change applies
+immediately without a reload — shadow maps resize, the post chain is rebuilt, the pixel ratio
+changes, and a Dust motes or Room detail change rebuilds the room while keeping found/hinted
+objects and the camera — and is saved in `hn-settings-v1` under `graphics`. The pixel ratio is
+`min(devicePixelRatio, cap) × preset scale × render scale × adaptive scale` with caps Low 1,
+Balanced 1.5, High/Ultra 2 (Ultra's preset scale is 1.25). If the addons fail to load or the post
+chain throws, the room renders directly and the panel says post-processing is unavailable.
+
+| Preset | Shadows | AO | Bloom | Grade | AA | Reflections | Motes | Detail |
+|---|---|---|---|---|---|---|---|---|
+| Low | off | off | off | off | MSAA (canvas) | off | low | plain |
+| Balanced | low | off | on | on | FXAA | on | high | detailed |
+| High | medium | on | on | on | SMAA | on | high | detailed |
+| Ultra | high | high | on | on | MSAA | on | high | detailed |
+
+Low draws exactly the pre-preset scene (no post chain, no addons downloaded, 100 motes, pixel
+ratio ≤ 1).
 
 **Typography.** System UI stack (`system-ui, -apple-system, "Segoe UI", Roboto`), 16 px base scaled
 by `--hn-font-scale` (1.2 under Larger text). Numeric HUD values use tabular figures.
 
 **The hero.** The canvas. Rails are flat, low-chroma and un-animated; nothing in the UI glows except
-the amber accent, so the only bright warm things on screen are the lamp, the candle and the
-selection rings.
+the amber accent, so the only bright warm things on screen are the lamp, the candle, the window
+and the selection rings.
 
 **Motion principles.** Cosmetic motion is exponential smoothing toward a target, never a scripted
 keyframe: found objects lift with `lerp(dt*8)`, rings fade with `lerp(dt*10)`, unfound objects bob
 ±0.02 on a per-item phase, the candle flame flickers on two detuned sines, the pendulum swings at
-2.2 rad/s, and dust motes drift on a sine field. **Reduced motion** (`Settings.reducedMotion`, also
+2.2 rad/s, dust motes drift on a sine field, and (at Room detail "detailed") the candle's glow light flickers
+with it. **Reduced motion** (`Settings.reducedMotion`, also
 auto-detected from `prefers-reduced-motion` on a first visit) removes the flame, pendulum, dust,
 bob, and found-object rotation, snaps the lift and the camera ease to their end state in one frame,
 and shortens the countdown to a single "Go" and the results delay to 100 ms. Gameplay legibility is
@@ -411,7 +461,10 @@ generated with MOSS-SoundEffect v2.0 at 100 inference steps.
 **Ships today:** `en-US` only. Every visible string is an English literal inside `game.js`,
 `content.js` (object labels, adjectives, tutorial prompts) and `index.html`; `<html lang="en">` is
 fixed. The nine required locales — en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT —
-are **not** implemented; see §17. What the design commits to when they land:
+are **not** implemented for the game as a whole; see §17. The one exception is the Settings →
+Graphics section, whose strings ship in all nine locales (`gfx-i18n.js`), chosen from
+`navigator.languages` with region → base-language → en-US fallback (e.g. es-MX → es-419,
+pt-PT → pt-BR). What the design commits to when the rest lands:
 
 - Strings live in `data/i18n/<locale>.json`, one flat key space, loaded by `server.js` as static
   data and fetched once at boot with `en-US` as the always-bundled fallback.
@@ -503,11 +556,12 @@ a v1 document is migrated, a corrupt one is discarded for a fresh doc rather tha
 state has its own `R.migrateState` for v1 → v2. All writes are try/caught for quota-full private
 modes.
 
-**Rendering budget.** Quality tiers pick DPR, shadows, particle count and antialias:
-high `dpr 2.0 / 800 motes`, medium `1.5 / 300`, low `1.0 / 100 / no shadows`. `auto` chooses medium
-when the viewport is under 800 px wide or `hardwareConcurrency ≤ 4`. Target: 60 fps desktop, 30 fps
-mobile, ≤ 40 pickable meshes in the worst level (16 requested + 14 decoys), one draw call per
-primitive with no post-processing. Materials and geometries are tracked in a `disposables` list and
+**Rendering budget.** Graphics presets (§8, `gfx.js`) pick shadows, AO, bloom, grade,
+anti-aliasing, reflections, mote count, room detail and the pixel-ratio cap; a pre-preset
+`quality` value in a saved settings document is migrated once (high → High, medium → Balanced,
+low → Low). Target: 60 fps desktop, 30 fps mobile, ≤ 40 pickable meshes in the worst level
+(16 requested + 14 decoys), one draw call per primitive; adaptive resolution trades pixels for
+frame time. The composer is only built and rendered when the resolved chain is non-empty. Materials and geometries are tracked in a `disposables` list and
 released on every scene load; the renderer survives `webglcontextlost` by pausing the frame body
 until restore.
 
@@ -522,7 +576,10 @@ dotfile path are refused by the static handler.
 **How the e2e test drives the real UI.** `tests/e2e.mjs` launches system Chrome through
 `playwright-core` with SwiftShader, boots `server.js` on an ephemeral port, and clicks the actual
 DOM: the title's Practice button, the difficulty `<select>`, the seed `<input>` (fixed to 424242),
-Begin, Escape to pause, the Settings quality select, the hint and reset-view buttons. To find an
+Begin, Escape to pause, the Settings quality select, the hint and reset-view buttons. Before
+the round it opens Settings from the title and exercises Graphics: Low then High (asserted through
+`body[data-gfx-preset]`, the canvas's `data-gfx-preset` and the cost summary), a Glow (bloom)
+override, a reload that must keep both, and a switch back to Auto that clears the override. To find an
 object it projects the item's world position through the live camera and issues a real
 `page.mouse.click` on the canvas; if the ray misses it falls back to arrow-key focus plus Enter —
 both are player-reachable paths. It asserts no page errors at all, runs the whole script twice
@@ -543,8 +600,13 @@ determinism; v1 → v2 migration; a pinned golden hash for an easy session; and 
 pass (static serving, time, daily, validated submit, rejection of an impossible score, leaderboard,
 cloud-save round-trip, achievement idempotency, submission guards).
 
+**`tests/gfx.test.mjs`** (also run by `npm test`) checks `detectPreset` on sample GPU strings
+and the mobile cap, `resolve` with presets, overrides, invalid values and the render-scale clamp,
+that choosing a preset clears overrides, the legacy-quality migration, `describe`, and that all
+nine locales carry every Graphics string.
+
 **`npm run test:e2e` (`tests/e2e.mjs`)** drives the real UI as described in §13 and fails on any
-console/page error at either viewport.
+console error or warning, or page error, at either viewport.
 
 **QA bar as checkable statements** (per `agents/qa.md`):
 
@@ -582,7 +644,8 @@ console/page error at either viewport.
 | `sfx/countdown-tick.opus` | `countdown` | MOSS-SFX v2.0 | generated this pass, wired in `Game.countdown` |
 | `sfx/timer-warning.opus` | `timer-low` | MOSS-SFX v2.0 | generated this pass, wired in `Game.refreshTimer` |
 | `sfx/achievement-unlock.opus` | `achieve` | MOSS-SFX v2.0 | generated this pass, wired in `Game.toResults` |
-| `vendor/three.module.js`, `three.core.js` | Renderer | three.js (MIT) | shipped |
+| `vendor/three.module.js`, `three.core.js` | Renderer | three.js 0.185.1 (MIT) | shipped |
+| `vendor/three/addons/` | Post-processing passes, shaders, `RoomEnvironment` | three.js 0.185.1 `examples/jsm` (MIT) | shipped |
 | — | 3D models | — | not called for: gameplay geometry is procedural by design (§8), so a baked hero prop would only duplicate one of 20 kinds |
 | — | Character animation | — | not called for: no humanoid appears in the game |
 
@@ -590,7 +653,7 @@ console/page error at either viewport.
 
 ## 16. Known limitations
 
-- **English only.** See §10 and §17; the nine-locale requirement is unmet.
+- **English only** apart from the Graphics settings section. See §10 and §17; the nine-locale requirement is otherwise unmet.
 - **Non-requested decoys are pickable and penalised, but decoys never become requested.** A level's
   requested set is fixed at generation, so a player who memorises a daily's decoys has a small edge
   on a retry. Only the first daily submission is ranked, which limits the exposure.
