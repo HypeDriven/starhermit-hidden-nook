@@ -683,3 +683,7 @@ console error or warning, or page error, at either viewport.
 2. **A settings language picker**, which §10 assumes as the first source of the locale choice.
 3. **Anchor de-collision at generation time** (a minimum separation pass in `C.generateLevel`), which
    would remove the overlap noted in §16.
+
+## Browser interference
+
+`browser-guard.js` (loaded from `index.html`) suppresses browser UI that gets in the way of play: the right-click context menu, the iOS long-press callout, copy / cut / paste, and page text selection. Text fields (inputs, textareas, selects, contenteditable) keep normal selection, context menu and clipboard behaviour.
