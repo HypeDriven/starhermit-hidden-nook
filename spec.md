@@ -26,18 +26,21 @@ candle burns down.
 
 | Path | Responsibility |
 |---|---|
-| `index.html` | Static shell: topbar, left rail (requests + progress), canvas holder, right rail (score + actions + object list), bottom tray, two ARIA live regions. Loads `rules.js` and `content.js` as classic scripts, then `game.js` as a module; an import map resolves `three` and `three/addons/`. |
+| `index.html` | Static shell: topbar, left rail (requests + progress), canvas holder, right rail (score + actions + object list), bottom tray, two ARIA live regions. Loads `rules.js`, `content.js`, `starhermit-sdk.js` and `platform.js` as classic scripts, then `game.js` as a module; an import map resolves `three` and `three/addons/`. |
 | `style.css` | All presentation: token palette, three responsive layouts, high-contrast / large-text / reduced-motion variants, safe-area insets. |
 | `rules.js` | Pure deterministic rules engine (UMD → `window.HNRules` / `require`). Owns every state transition. |
 | `content.js` | Versioned content (UMD → `window.HNContent`): object vocabulary, themes, anchors, procedural level generation, tutorial script, offline validators. |
-| `game.js` | Client: `Platform`, `Settings`, `Progress`, `Audio`, `NookRenderer` (scene, graphics settings, post chain), `UI`, `Game` state machine (incl. the Settings → Graphics section). |
+| `starhermit-sdk.js` | Shared StarHermit client (`window.StarHermit`), an unmodified copy of `tools/starhermit-sdk.js`. |
+| `platform.js` | `window.HNPlatform`: StarHermit adapter over the SDK plus the server clock (`GET /api/v1/time`, signed in only). |
+| `game.js` | Client: `Settings`, `Progress`, `Audio`, `NookRenderer` (scene, graphics settings, post chain), `UI`, `Game` state machine (incl. the Settings → Graphics section). |
 | `gfx.js` | Pure graphics quality model: presets, categories, GPU detection (`detectPreset`), `resolve`, `presetTier`, `choosePreset`, `describe`. No three.js import. |
 | `gfx-i18n.js` | Settings → Graphics strings in the nine target locales and `pickLocale`. |
 | `vendor/three/addons/` | three.js 0.185.1 addons: `EffectComposer`, `RenderPass`, `ShaderPass`, `OutputPass`, `GTAOPass`, `UnrealBloomPass`, `SMAAPass`, their shaders, `FXAAShader`, `RoomEnvironment`. Loaded with dynamic `import()` only when a preset needs them. |
-| `server.js` | Static file server plus the game's REST surface (time, daily, submit, leaderboard, save, achievements, telemetry). |
+| `server.js` | Static file server plus a legacy REST surface (time, daily, submit, leaderboard, save, achievements, telemetry); the client calls only `/api/v1/time`, and only when signed in. |
 | `test.js` | `npm test` — 30 checks: rules legality, scoring, replay determinism, fuzz, content validation, migration, golden hashes, server API. |
 | `tests/e2e.mjs` | `npm run test:e2e` — Playwright playthrough of the real UI at desktop and mobile viewports. |
 | `tests/gfx.test.mjs` | `node --test` unit tests for `gfx.js` and `gfx-i18n.js` (run by `npm test`). |
+| `tests/platform.test.mjs` | `node --test` unit tests for `platform.js` over the SDK with a stubbed fetch (run by `npm test`). |
 | `sfx/` | 16 Opus one-shots, `manifest.txt` (canonical), `manifest.json` (generator input), `manifest.md` (generated table). |
 | `assets/` | `keyart-nook.webp` (title backdrop), `wall-paper.webp` (room wall tile). |
 | `data/store.json` | Server-side durable store: daily boards, saves, achievements. Never served. |
@@ -503,36 +506,46 @@ pt-PT → pt-BR). What the design commits to when the rest lands:
   in the rail *and* announced. The request chip carries the shape word next to the colour swatch.
 - **Target sizes.** All buttons have `min-height: 44px`; the bottom tray on mobile is three
   full-width targets above the safe-area inset.
-- **Haptics** (mobile) can be turned off; **telemetry** is opt-in and off by default.
+- **Haptics** (mobile) can be turned off. There is no telemetry.
 
 ---
 
 ## 12. StarHermit integration
 
 `starhermit.txt` declares `name`, `launch=index.html`, `owner`, `server=server.js`, `version`,
-`contentVersion=2` and `cover=coverart.png`, per https://wiki.starhermit.com/ conventions.
+`contentVersion=2` and `cover=coverart.png`, per https://wiki.starhermit.com/ conventions, plus the
+keyboard actions `control.pause=Escape`, `prev=ArrowLeft+ArrowUp`, `next=ArrowRight+ArrowDown`,
+`select=Enter+Space`, `hint=KeyH`, `undo=KeyU`, `resetView=KeyR`.
+
+`starhermit-sdk.js` (the shared client, unmodified) and `platform.js` (`window.HNPlatform`) load
+before `game.js`; `Platform.init()` at boot calls `StarHermit.init()`.
 
 **Used.**
 
 | Feature | How |
 |---|---|
-| Identity | The launch token is read once from the URL fragment `#game_token=` (query `?launch_token=`/`?token=` remains as a local-dev fallback), kept in memory only (never persisted) and stripped via `history.replaceState`. The payload's `sub` and `game_scope` are decoded (no signature verify); hosted mode is on iff a token was read. Every REST call sends `Authorization: Bearer`; a scoped token is re-minted every 45 min via `POST /api/v1/games/{slug}/launch-token` (60 s retry). Without a token no platform calls are made. |
-| Profile | `GET /api/v1/users/{sub}/profile` → `nickname`, shown in the status line ("Signed in as …"); fallback `"Player " + id.slice(0,8)`. `GET /api/v1/me` is never called and usernames never displayed. |
-| Server script | `server.js` is this game's own dev server (static files + validated daily/board). It is detected at boot by its `contentVersion` stamp on `/api/v1/time`, probed only when no launch token is present (local dev); on-platform those surfaces do not exist. It also accepts `Authorization: Bearer` as an identity for its own routes. |
-| Time sync | `GET /api/v1/time` at boot (own server / local dev only); the round-trip midpoint sets `Platform.timeOffsetMs` so the daily rollover and streak logic use server time, not the device clock. |
-| Daily content | Own server: `GET /api/v1/daily` returns the authoritative day and an `excluded` flag; a defective day is played unranked instead of being hidden. Platform: the day is computed locally and played unranked, with no fabricated calls. |
-| Leaderboards | Own server (local dev): `POST /api/v1/daily/submit` with the full replay envelope — the server re-runs the command log through the same `rules.js` and rejects tampered or implausible scores; `GET /api/v1/leaderboard?scope=global&day=` renders the Score chase screen. Platform: read-only per the wiki — `GET /api/v1/games/{slug}` → `leaderboardId`, then `GET /api/v1/leaderboards/{id}/entries` with userIds resolved to nicknames via the profile helper; no `leaderboardId` (or offline) falls back to personal bests. |
-| Achievements | Local only: unlocks are timestamps inside the progress document and mirror to the cloud-save slot with it. No unlock endpoint is called (`server.js` has no Jint game-script contract, so there is no script-owned path). |
-| Cloud save | `GET`/`PUT /api/v1/me/cloud-saves/{slug}` (slug from `game_scope`), body `{dataBase64}` — a stored zip (cookbook helper) wrapping the progress JSON. Load prefers the remote snapshot when newer and intact; saves debounce 2 s and flush on `pagehide`/`visibilitychange`; a small sync chip (Saving… / Cloud synced / Offline — local only) sits under the status line. `localStorage` remains the offline cache. |
-| Telemetry | `navigator.sendBeacon('/api/v1/telemetry')` for `round-start`, `round-end`, `round-quit`, `tutorial-step` and `settings-change` — own server (local dev) only **and** consented; the platform has no per-game telemetry endpoint. |
+| Identity | The SDK reads the launch token from `#game_token=` (or the `#access_token=` sign-in return), strips it, takes the slug from `game_scope` and renews it before expiry. Hosted mode is on while the SDK holds a token. If renewal is refused, a toast says the player is signed out, the sync chip hides and play continues locally. |
+| Sign-in | On `<id>.starhermit.com` without a token the title menu shows **Sign in with StarHermit** (`StarHermit.signIn()`); hidden when signed in and when running locally. |
+| Profile | The profile nickname (fallback `"Player " + id prefix`) is shown in the status line ("Signed in as …") with the account avatar beside it. `GET /api/v1/me` is never called and usernames never displayed. |
+| Cloud save | The checksummed progress document lives in the slot `game:<slug>` via the SDK. Load prefers the remote snapshot when newer and intact; saves debounce 2 s and flush with keepalive on `pagehide`/hidden; the sync chip (Saving… / Cloud synced / Offline — local only) sits under the status line. `localStorage` remains the offline cache. |
+| Settings KV | Every Settings change (volumes, accessibility, left-handed, hold-to-pan, haptics, graphics, camera preset) is mirrored with `patchSettings` (600 ms debounce); at boot the platform values are applied over the local ones. |
+| Controls | `keydown` routes by `event.code` through `StarHermit.loadBindings`; Help lists the effective keys. |
+| Invite link | **Invite a friend** on the title menu (signed in only) copies `StarHermit.inviteLink()` and confirms with a toast. |
+| Leaderboards | Platform: the first platform board (`StarHermit.leaderboard()`, nicknames via the profile route, own row highlighted) fills the Score chase screen when one exists; otherwise personal bests on this device. Scores are never submitted to the own server. |
+| Server script | `server.js` is a dev static server. Standalone (no launch token) the game makes no own-server requests at all; its daily/submit/leaderboard/telemetry routes are not called. |
+| Time sync | `GET /api/v1/time` (Bearer) at boot and on auth change, **signed in only**; the round-trip midpoint sets `Platform.timeOffsetMs`. Standalone uses the local clock. |
+| Daily content | The day is computed from the (local or server-offset) UTC clock and played unranked; the score is saved with progress. |
+| Achievements | Local only: unlocks are timestamps inside the progress document and travel with the cloud save. |
+| Telemetry | None. |
 
-**Deliberately not used.** Presence, real-time sessions, matchmaking, parties, chat, friends graphs
-and in-app purchase. Hidden Nook is solo; its only social surface is the asynchronous daily board.
-Platform achievements unlock (no catalog entitlement; unlocks stay local in the save document) and
-any client score submission (boards are script-owned; the platform board is read-only) are likewise
-unused. Every network call degrades to a local behaviour, so the game is fully playable from
-`file://` or offline — `Platform.hosted` gates the platform calls and `Platform.ownServer` the
-own-dev-server ones.
+Account strings (sign-in, invite, toasts) are localized in the nine locales (`SH_TEXT` in
+`game.js`, locale from `pickLocale`).
+
+**Deliberately not used.** `server.js` is not a platform game script, so platform sessions,
+matchmaking, session invites, chat, replays and platform achievements have nothing to drive them;
+realtime rooms and voice are out of scope for a solo game. Every network call degrades to local
+behaviour, so the game is fully playable offline — `Platform.hosted` gates every request,
+including the own-server time sync.
 
 ---
 
@@ -582,7 +595,10 @@ the round it opens Settings from the title and exercises Graphics: Low then High
 override, a reload that must keep both, and a switch back to Auto that clears the override. To find an
 object it projects the item's world position through the live camera and issues a real
 `page.mouse.click` on the canvas; if the ray misses it falls back to arrow-key focus plus Enter —
-both are player-reachable paths. It asserts no page errors at all, runs the whole script twice
+both are player-reachable paths. Finally it checks StarHermit: standalone makes no same-origin `/api` or `/ws`
+request (asserted for the whole pass up to the signed-in step) and shows no account buttons; a `#game_token=` launch against a stubbed API (`page.route`) shows
+the nickname, strips the token, loads `game:<slug>`, and clicking Invite a friend shows a toast.
+It asserts no page errors at all, runs the whole script twice
 (1280×800 and a 390×844 touch profile) and screenshots every step.
 
 ---
@@ -604,6 +620,12 @@ cloud-save round-trip, achievement idempotency, submission guards).
 and the mobile cap, `resolve` with presets, overrides, invalid values and the render-scale clamp,
 that choosing a preset clears overrides, the legacy-quality migration, `describe`, and that all
 nine locales carry every Graphics string.
+
+**`tests/platform.test.mjs`** (also run by `npm test`) loads the SDK and `platform.js` with a
+stubbed fetch and launch fragment: token read and stripped, slug from `game_scope`, nickname,
+`GET /api/v1/time` when signed in, cloud save round-trip through `game:<slug>`, settings
+PATCH, bindings, invite link, Bearer on every call; standalone makes no call at all (not even the time probe); sign-in is
+offered on the hosted domain.
 
 **`npm run test:e2e` (`tests/e2e.mjs`)** drives the real UI as described in §13 and fails on any
 console error or warning, or page error, at either viewport.
@@ -656,7 +678,7 @@ console error or warning, or page error, at either viewport.
 - **English only** apart from the Graphics settings section. See §10 and §17; the nine-locale requirement is otherwise unmet.
 - **Non-requested decoys are pickable and penalised, but decoys never become requested.** A level's
   requested set is fixed at generation, so a player who memorises a daily's decoys has a small edge
-  on a retry. Only the first daily submission is ranked, which limits the exposure.
+  on a retry (dailies are unranked).
 - **The hint is always the lowest pending index.** It is deterministic (required for replay), but a
   player who spams hints gets the wave's targets in a predictable order rather than the "hardest to
   see" one.
@@ -670,8 +692,7 @@ console error or warning, or page error, at either viewport.
   little.
 - **Gamepad support is unbindable** and polls at a fixed 10 Hz.
 - **Leaderboard names** — on-platform entries resolve to platform nicknames via the profile
-  helper; the own-server dev board shows the signed-in nickname when a token identity exists
-  and a truncated guest id only for pure local play.
+  helper; standalone shows personal bests only.
 
 ---
 

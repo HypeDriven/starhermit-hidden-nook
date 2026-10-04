@@ -16,14 +16,16 @@
  * Two passes: desktop 1280x800, then a fresh context at 390x844 (hasTouch).
  * Page errors and non-benign console errors fail the run.
  *
- * The real StarHermit backend (server.js) is booted on an ephemeral port, so
- * the boot time-sync probe, daily fetch and any telemetry hit the actual API
- * instead of 404ing into offline mode.
+ * server.js is booted on an ephemeral port as the static host. Standalone
+ * (no launch token) the game must make zero same-origin /api or /ws
+ * requests; the pass asserts it until the signed-in step, which stubs the
+ * platform API (and the signed-in-only GET /api/v1/time).
  *
  * Run: npm run test:e2e
  */
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright-core';
+import { launchToken, stubStarHermit } from './starhermit-e2e.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -122,8 +124,15 @@ async function playRound(page, vp) {
 
 async function runPass(browser, vpName, contextOpts) {
   const context = await browser.newContext(contextOpts);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const page = await context.newPage();
   const errors = [];
+  // Standalone until the signed-in step: no same-origin /api or /ws at all.
+  let standalone = true;
+  page.on('request', (r) => {
+    const u = new URL(r.url());
+    if (standalone && u.hostname === '127.0.0.1' && /^\/(api|ws)(\/|$)/.test(u.pathname)) errors.push('standalone own-server request: ' + r.url());
+  });
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {
     if (m.type() !== 'error' && m.type() !== 'warning') return;
@@ -280,6 +289,27 @@ async function runPass(browser, vpName, contextOpts) {
       await page.waitForSelector('#overlay-root button[data-act="practice"]');
       if (!/Hidden Nook/.test(await overlayHeading(page).textContent())) throw new Error('did not return to title');
       await page.screenshot({ path: SHOT('back-to-title', vpName) });
+    });
+
+    await step('StarHermit: standalone makes no /api or /ws calls; launch token → nickname, invite toast', async () => {
+      // Standalone: no /api or /ws requests (asserted by the request listener).
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForSelector('#overlay-root button[data-act="practice"]');
+      if (await page.locator('#btn-invite, #btn-signin').count()) throw new Error('account buttons shown standalone');
+      await page.waitForTimeout(200);
+      if (errors.length) throw new Error(errors.join('\n'));
+      standalone = false;
+      const calls = await stubStarHermit(page);
+      await page.goto(`http://127.0.0.1:${PORT}/index.html#game_token=` + launchToken(), { waitUntil: 'load' });
+      await page.waitForFunction(() => /Al/.test(document.getElementById('status-line').textContent));
+      if (page.url().includes('game_token')) throw new Error('token left in URL');
+      await page.locator('#btn-invite').click();
+      await page.locator('#hn-toast').waitFor({ state: 'visible' });
+      const box = await page.locator('#hn-toast').boundingBox();
+      if (box.x < 0 || box.x + box.width > page.viewportSize().width + 1) throw new Error('toast cut off');
+      if (!calls.some((c) => c.includes('/cloud-saves/game%3Agid-1'))) throw new Error('no cloud-save load: ' + calls.join(', '));
+      await page.screenshot({ path: SHOT('signed-in', vpName) });
+      await page.unroute(/\/api\/v1\//);
     });
   } finally {
     await context.close();

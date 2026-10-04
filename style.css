@@ -264,3 +264,8 @@ body.hn-large-text { --hn-font-scale: 1.2; }
   border-color: var(--hn-accent);
 }
 body.hn-high-contrast .hn-overlay.hn-overlay-keyart { background-image: none; }
+/* StarHermit account: avatar beside the status line, confirmation toast */
+.hn-avatar { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: 6px; float: left; }
+.hn-toast { position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 1000; max-width: calc(100vw - 32px); padding: 0.6rem 1rem; border-radius: 10px; background: #221a14; color: var(--hn-text, #f3e9dc); border: 1px solid rgba(255,255,255,0.15); overflow-wrap: anywhere; text-align: center; }
+.hn-toast[hidden] { display: none; }
+.hn-board tr.hn-you td { color: var(--hn-good); font-weight: 600; }
