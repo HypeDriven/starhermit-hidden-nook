@@ -308,6 +308,11 @@ scene-object list is reachable by scrolling.
 **Mobile landscape (≤500 px tall).** Rails compress; the bottom tray stays, the topbar shrinks so
 the canvas keeps the majority of the viewport.
 
+**Large screens (above 1600×1000).** `ui-scale.js` sets `--ui-scale` on `<html>` (the smaller of width/1600 and
+height/1000, capped at 2.5) and `body` is CSS-`zoom`ed by it with every vh/vw length divided by it, so the whole
+three-column layout grows proportionally; the playfield renderer multiplies its pixel ratio by `UIScale.value`
+(within the existing 3× cap) so the scene stays sharp.
+
 **Must never be cut off:** the request strip's current wave, the timer when a round is timed, the
 score value, and every overlay's primary button. Overlays are capped at `max-height: 92%` with
 internal scrolling, and the journey grid at `max-height: 46vh`, so a 40-stage list never pushes the

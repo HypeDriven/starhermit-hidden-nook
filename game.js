@@ -728,7 +728,10 @@ class NookRenderer {
     if (!this._w) this.resize();
     this._adapt(dt * 1000);
     const dpr = window.devicePixelRatio || 1;
-    const ratio = clamp(Math.min(dpr, this.q.cap) * this.q.scale * this.adaptiveScale, 0.5, 3);
+    // The canvas sits inside the zoomed page (style.css), so its layout size is
+    // its on-screen size / UIScale; the backing store multiplies that back in.
+    const ui = (window.UIScale && window.UIScale.value) || 1;
+    const ratio = clamp(Math.min(dpr, this.q.cap) * ui * this.q.scale * this.adaptiveScale, 0.5, 3);
     if (Math.abs(ratio - this.pixelRatio) > 1e-3) {
       this.pixelRatio = ratio;
       this.renderer.setPixelRatio(ratio);
