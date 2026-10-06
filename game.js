@@ -1420,7 +1420,11 @@ const UI = {
     panel.innerHTML = html;
     root.appendChild(panel);
     const first = panel.querySelector('button, input, select, [tabindex]');
-    if (first) first.focus();
+    // preventScroll + reset: a low first control must not scroll the heading
+    // away; overlays always open at their top.
+    if (first) first.focus({ preventScroll: true });
+    root.scrollTop = 0;
+    panel.scrollTop = 0;
     // simple focus trap
     panel.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Tab') return;
