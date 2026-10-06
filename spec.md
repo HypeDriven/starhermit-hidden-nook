@@ -305,8 +305,8 @@ row above the canvas, canvas takes the remaining height, bottom tray of three 44
 above `env(safe-area-inset-bottom)`. The right rail's score value moves into the topbar area and the
 scene-object list is reachable by scrolling.
 
-**Mobile landscape (≤500 px tall).** Rails compress; the bottom tray stays, the topbar shrinks so
-the canvas keeps the majority of the viewport.
+**Mobile landscape (≤500 px tall).** Rails compress; the bottom tray stays (Hint / Undo / Reset view on one row — Pause is
+left to the top bar so the left column fits), the topbar shrinks so the canvas keeps the majority of the viewport.
 
 **Large screens (above 1600×1000).** `ui-scale.js` sets `--ui-scale` on `<html>` (the smaller of width/1600 and
 height/1000, capped at 2.5) and `body` is CSS-`zoom`ed by it with every vh/vw length divided by it, so the whole

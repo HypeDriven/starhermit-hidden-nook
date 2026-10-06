@@ -237,8 +237,10 @@ body.hn-reduced-motion .hn-progressbar-fill { transition: none; }
   .hn-rail-right .hn-objects { font-size: 0.8rem; }
   .hn-rail-right .hn-objects:not([open]) .hn-target-list { display: none; }
   .hn-rail-left { overflow: auto; }
-  .hn-tray { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-  .hn-tray .hn-btn { min-height: 44px; flex: 1; }
+  .hn-tray { display: flex; gap: 0.5rem; }
+  .hn-tray .hn-btn { min-height: 44px; flex: 1 1 auto; min-width: 0; padding-inline: 0.4rem; font-size: 0.88rem; }
+  /* the top bar already shows Pause here; a second one wrapped the tray to two rows and pushed the page past the fold */
+  .hn-tray #tray-pause { display: none; }
   .hn-playfield-wrap { min-height: 0; }
 }
 
