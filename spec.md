@@ -300,10 +300,11 @@ title, they return to the title menu.
 **Desktop (≥1024 px).** Three columns: 240 px request rail | flexible canvas | 240 px score rail;
 topbar above, bottom tray hidden.
 
-**Mobile portrait (≤700 px).** Single column: topbar, request strip becomes a horizontal scrolling
-row above the canvas, canvas takes the remaining height, bottom tray of three 44 px targets pinned
-above `env(safe-area-inset-bottom)`. The right rail's score value moves into the topbar area and the
-scene-object list is reachable by scrolling.
+**Mobile portrait (≤700 px).** Single column, exactly one viewport tall so a round never scrolls the
+page (390×844 and 375×667 both fit): compact topbar (status line clamped to two lines), canvas taking
+the remaining height (≥ 200 px), the Requests rail (compact chips, capped at 30vh and scrolling
+inside), one row with the score and the collapsed scene-object list, then the bottom tray of 48 px
+targets above `env(safe-area-inset-bottom)`.
 
 **Mobile landscape (≤500 px tall).** Rails compress; the bottom tray stays (Hint / Undo / Reset view on one row — Pause is
 left to the top bar so the left column fits), the topbar shrinks so the canvas keeps the majority of the viewport.
