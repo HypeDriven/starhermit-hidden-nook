@@ -195,17 +195,23 @@ const Progress = {
         doc = this.fresh();
         if (v1 && typeof v1 === 'object') {
           doc.journeyUnlocked = v1.journeyUnlocked | 0;
-          doc.updatedAt = Date.now();
+          doc.updatedAt = 1; // real progress, but older than any cloud save
         }
       } catch { doc = this.fresh(); }
     }
     this.doc = doc;
-    this.save();
+    // Cache the (possibly migrated) doc without restamping updatedAt: a fresh
+    // stamp here would make the stale local copy look newer than a cloud save
+    // from another device, which cloudPull would then lose and overwrite.
+    this.writeLocal();
+  },
+  writeLocal() {
+    this.doc.checksum = this.checksumOf(this.doc);
+    try { localStorage.setItem('hn-progress-v2', JSON.stringify(this.doc)); } catch { /* full */ }
   },
   save() {
     this.doc.updatedAt = Platform.now();
-    this.doc.checksum = this.checksumOf(this.doc);
-    try { localStorage.setItem('hn-progress-v2', JSON.stringify(this.doc)); } catch { /* full */ }
+    this.writeLocal();
     this.scheduleCloudPush();
   },
   scheduleCloudPush() {
@@ -221,15 +227,19 @@ const Progress = {
     UI.setSync('saving');
     let remote = null;
     try { remote = await Platform.loadCloud(); } catch { remote = null; }
-    // Conflict resolution: prefer the remote snapshot when it is newer and
-    // intact; localStorage already holds the offline cache either way.
-    if (remote && remote.v === 2 && remote.checksum === this.checksumOf(remote)
-        && (!this.doc || (remote.updatedAt || 0) > (this.doc.updatedAt || 0))) {
+    // Conflict resolution: the remote snapshot wins when intact and at least
+    // as new; local writes before this point never restamp updatedAt.
+    const intact = remote && remote.v === 2 && remote.checksum === this.checksumOf(remote);
+    const localAt = (this.doc && this.doc.updatedAt) || 0;
+    if (intact && (remote.updatedAt || 0) >= localAt) {
       this.doc = remote;
-      try { localStorage.setItem('hn-progress-v2', JSON.stringify(this.doc)); } catch { /* full */ }
+      this.writeLocal();
     }
     this.cloudReady = true;
     UI.setSync('synced');
+    // Push only when local is genuinely newer (or the slot is empty) and
+    // holds real progress; never seed the cloud with an untouched fresh doc.
+    if (this.doc !== remote && localAt > 0) this.scheduleCloudPush();
   },
   unlock(key) {
     if (this.doc.achievements[key]) return false;
