@@ -36,7 +36,8 @@ candle burns down.
 | `gfx.js` | Pure graphics quality model: presets, categories, GPU detection (`detectPreset`), `resolve`, `presetTier`, `choosePreset`, `describe`. No three.js import. |
 | `gfx-i18n.js` | Settings → Graphics strings in the nine target locales and `pickLocale`. |
 | `vendor/three/addons/` | three.js 0.185.1 addons: `EffectComposer`, `RenderPass`, `ShaderPass`, `OutputPass`, `GTAOPass`, `UnrealBloomPass`, `SMAAPass`, their shaders, `FXAAShader`, `RoomEnvironment`. Loaded with dynamic `import()` only when a preset needs them. |
-| `server.js` | Static file server plus a legacy REST surface (time, daily, submit, leaderboard, save, achievements, telemetry); the client calls only `/api/v1/time`, and only when signed in. |
+| `score-script.js` | StarHermit platform script (`server=`): range-checks a finished round's total and posts it to the `high-score` leaderboard (canonical copy in the games repo's `tools/score-script.js`). |
+| `server.js` | Local dev server: static file server plus a legacy REST surface (time, daily, submit, leaderboard, save, achievements, telemetry); the client calls only `/api/v1/time`, and only when signed in. |
 | `test.js` | `npm test` — 30 checks: rules legality, scoring, replay determinism, fuzz, content validation, migration, golden hashes, server API. |
 | `tests/e2e.mjs` | `npm run test:e2e` — Playwright playthrough of the real UI at desktop and mobile viewports. |
 | `tests/gfx.test.mjs` | `node --test` unit tests for `gfx.js` and `gfx-i18n.js` (run by `npm test`). |
@@ -518,7 +519,7 @@ pt-PT → pt-BR). What the design commits to when the rest lands:
 
 ## 12. StarHermit integration
 
-`starhermit.txt` declares `name`, `launch=index.html`, `owner`, `server=server.js`, `version`,
+`starhermit.txt` declares `name`, `launch=index.html`, `owner`, `server=score-script.js`, `version`,
 `contentVersion=2` and `cover=coverart.png`, per https://wiki.starhermit.com/ conventions, plus the
 keyboard actions `control.pause=Escape`, `prev=ArrowLeft+ArrowUp`, `next=ArrowRight+ArrowDown`,
 `select=Enter+Space`, `hint=KeyH`, `undo=KeyU`, `resetView=KeyR`.
@@ -537,17 +538,17 @@ before `game.js`; `Platform.init()` at boot calls `StarHermit.init()`.
 | Settings KV | Every Settings change (volumes, accessibility, left-handed, hold-to-pan, haptics, graphics, camera preset) is mirrored with `patchSettings` (600 ms debounce); at boot the platform values are applied over the local ones. |
 | Controls | `keydown` routes by `event.code` through `StarHermit.loadBindings`; Help lists the effective keys. |
 | Invite link | **Invite a friend** on the title menu (signed in only) copies `StarHermit.inviteLink()` and confirms with a toast. |
-| Leaderboards | Platform: the first platform board (`StarHermit.leaderboard()`, nicknames via the profile route, own row highlighted) fills the Score chase screen when one exists; otherwise personal bests on this device. Scores are never submitted to the own server. |
-| Server script | `server.js` is a dev static server. Standalone (no launch token) the game makes no own-server requests at all; its daily/submit/leaderboard/telemetry routes are not called. |
+| Leaderboards | Signed in, every finished Journey or Daily round (not Learn) posts its total through `StarHermit.submitScores` (a practice session whose `score-script.js` posts it to the `high-score` board: integer, higher is better, 0–100,000); the results panel shows "Posting score to the leaderboard…", then "Leaderboard rank: #N" (or posted / not posted), in the nine locales. The first platform board (`StarHermit.leaderboard()`, i.e. `high-score`, nicknames via the profile route, own row highlighted) fills the Score chase screen; otherwise personal bests on this device. Standalone posts nothing and shows no line. Scores are never submitted to the own server. |
+| Server script | `score-script.js` is the platform script; `server.js` is a dev static server. Standalone (no launch token) the game makes no own-server requests at all; its daily/submit/leaderboard/telemetry routes are not called. |
 | Time sync | `GET /api/v1/time` (Bearer) at boot and on auth change, **signed in only**; the round-trip midpoint sets `Platform.timeOffsetMs`. Standalone uses the local clock. |
 | Daily content | The day is computed from the (local or server-offset) UTC clock and played unranked; the score is saved with progress. |
 | Achievements | Local only: unlocks are timestamps inside the progress document and travel with the cloud save. |
 | Telemetry | None. |
 
-Account strings (sign-in, invite, toasts) are localized in the nine locales (`SH_TEXT` in
+Account strings (sign-in, invite, toasts, leaderboard line) are localized in the nine locales (`SH_TEXT` in
 `game.js`, locale from `pickLocale`).
 
-**Deliberately not used.** `server.js` is not a platform game script, so platform sessions,
+**Deliberately not used.** Apart from the score post, there is no platform session logic, so
 matchmaking, session invites, chat, replays and platform achievements have nothing to drive them;
 realtime rooms and voice are out of scope for a solo game. Every network call degrades to local
 behaviour, so the game is fully playable offline — `Platform.hosted` gates every request,

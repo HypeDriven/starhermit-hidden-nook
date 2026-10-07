@@ -4,7 +4,7 @@
 // #access_token= sign-in return; stripped from the URL), its renewal, and
 // every platform call made here: profile, the cloud-save slot game:<slug>,
 // the per-player settings KV, key bindings, the invite link and the read-only
-// leaderboard. This file adds the server clock (GET /api/v1/time, signed in
+// leaderboard, plus StarHermit.submitScores for the high-score board. This file adds the server clock (GET /api/v1/time, signed in
 // only). Without a token no request of any kind —
 // platform or own-server — is ever made; the local clock is used.
 (function (root) {
@@ -106,6 +106,20 @@
       return this.hosted ? SH.loadBindings(defaults) : Promise.resolve(JSON.parse(JSON.stringify(defaults)));
     },
     inviteLink() { return this.hosted ? SH.inviteLink() : null; },
+    /** Post a finished round to the leaderboards (score-script.js); resolves
+     *  { posted, rank } — rank on the high-score board, or null. Signed in only. */
+    async submitScore(total) {
+      if (!this.hosted) return { posted: false, rank: null };
+      try {
+        const keys = await SH.submitScores({ 'high-score': total });
+        if (!(keys || []).includes('high-score')) return { posted: false, rank: null };
+        try {
+          const r = await SH.leaderboard('high-score', { pageSize: 100 });
+          const me = (r.items || []).find((e) => String(e.userId) === this.sub);
+          return { posted: true, rank: me ? me.rank : null };
+        } catch { return { posted: true, rank: null }; }
+      } catch { return { posted: false, rank: null }; }
+    },
     /** Read-only platform board: { entries:[{rank,name,score,you}] } or null when there is none. */
     async leaderboard(pageSize) {
       if (!this.hosted) return null;
