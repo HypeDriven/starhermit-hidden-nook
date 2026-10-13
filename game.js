@@ -300,7 +300,7 @@ const Audio = {
       for (const name of ['music', 'sfx', 'ambience']) {
         const g = this.ctx.createGain();
         g.connect(this.ctx.destination);
-        this.buses[name] = g;
+        this.buses[name] = (globalThis.GameOptions ? globalThis.GameOptions.tagBus(g, name) : g);
       }
       this.applyVolumes();
       this.startAmbience();
@@ -335,7 +335,7 @@ const Audio = {
   playSample(name) {
     const buf = this.samples[name];
     if (!buf || typeof buf === 'string') return false;
-    const src = this.ctx.createBufferSource();
+    const src = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(this.ctx.createBufferSource(), name) : this.ctx.createBufferSource());
     src.buffer = buf;
     src.connect(this.buses.sfx);
     src.start();
@@ -350,7 +350,7 @@ const Audio = {
   tone(bus, freq, dur, type, gain, when) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime + (when || 0);
-    const o = this.ctx.createOscillator();
+    const o = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(this.ctx.createOscillator(), bus) : this.ctx.createOscillator());
     const g = this.ctx.createGain();
     o.type = type || 'sine';
     o.frequency.value = freq;
@@ -367,7 +367,7 @@ const Audio = {
     const d = buf.getChannelData(0);
     const rng = R.mulberry32(0xa1b1);
     for (let i = 0; i < len; i++) d[i] = (rng() * 2 - 1) * 0.5;
-    const src = this.ctx.createBufferSource();
+    const src = (globalThis.GameOptions ? globalThis.GameOptions.trackSource(this.ctx.createBufferSource(), null) : this.ctx.createBufferSource());
     src.buffer = buf; src.loop = true;
     const f = this.ctx.createBiquadFilter();
     f.type = 'lowpass'; f.frequency.value = 320;
@@ -789,9 +789,9 @@ class NookRenderer {
       this._buildPost();
     }
     if (this.composer) {
-      try { this.composer.render(dt); return; } catch { this.postFailed = true; this.postKey = null; this.composer = null; }
+      try { (globalThis.GameOptions ? globalThis.GameOptions.draw(this.composer.renderer, () => this.composer.render(dt)) : this.composer.render(dt)); return; } catch { this.postFailed = true; this.postKey = null; this.composer = null; }
     }
-    this.renderer.render(this.scene, this.camera);
+    (globalThis.GameOptions ? globalThis.GameOptions.draw(this.renderer, () => this.renderer.render(this.scene, this.camera)) : this.renderer.render(this.scene, this.camera));
   }
 
   /** Rebuild the room for the current tiers, keeping item/camera state. */
@@ -1356,7 +1356,7 @@ class NookRenderer {
     el.addEventListener('pointerup', clearTouch);
     el.addEventListener('pointercancel', clearTouch);
     this.canvas.addEventListener('webglcontextlost', (ev) => { ev.preventDefault(); this._ctxLost = true; });
-    this.canvas.addEventListener('webglcontextrestored', () => { this._ctxLost = false; this.renderer.render(this.scene, this.camera); });
+    this.canvas.addEventListener('webglcontextrestored', () => { this._ctxLost = false; (globalThis.GameOptions ? globalThis.GameOptions.draw(this.renderer, () => this.renderer.render(this.scene, this.camera)) : this.renderer.render(this.scene, this.camera)); });
   }
 
   pick(clientX, clientY) {
