@@ -67,7 +67,34 @@ test('standalone: no token, no platform calls', async () => {
 });
 
 test('hosted without token offers sign-in', () => {
-  const w = loadScripts(FILES, { hostname: 'gid-1.starhermit.com' });
+  const w = loadScripts(FILES, { hostname: '0b9d6f2e-3c4a-4e5b-9a7c-1d2e3f405162.starhermit.com' });
   w.HNPlatform.init();
   assert.equal(w.HNPlatform.canSignIn(), true);
+});
+
+test('save conflict: the other device\'s save is reloaded and handed to the game to merge', async () => {
+  const be = makeBackend();
+  let refuse = false;
+  const fetch = async (url, init = {}) => {
+    if (refuse && (init.method || 'GET') === 'PUT' && url.includes('/cloud-saves/')) {
+      refuse = false;
+      return new Response(JSON.stringify({ error: 'conflict' }), { status: 412 });
+    }
+    return be.fetch(url, init);
+  };
+  const w = loadScripts(FILES, { hash: '#game_token=' + makeToken(), fetch });
+  const P = w.HNPlatform;
+  P.init();
+  await settle();
+  const got = [];
+  P.onConflict((doc) => got.push(plain(doc)));
+  P.saveCloud({ v: 2, foundTotal: 50 }, 0);   // "another device" wrote this
+  await P.flushCloud();
+  await P.loadCloud();
+  refuse = true;
+  P.saveCloud({ v: 2, foundTotal: 3 }, 0);
+  await P.flushCloud();
+  await settle(50);
+  assert.deepEqual(got, [{ v: 2, foundTotal: 50 }]);
+  assert.equal(w.StarHermit.saveConflicted(), false);
 });

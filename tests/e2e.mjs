@@ -311,6 +311,55 @@ async function runPass(browser, vpName, contextOpts) {
       await page.screenshot({ path: SHOT('signed-in', vpName) });
       await page.unroute(/\/api\/v1\//);
     });
+
+    await step('Language: Automatic follows the account (fr-CA); Italian mid-round re-renders; ui.language; report', async () => {
+      const calls = await stubStarHermit(page, { preferredLanguage: 'fr-CA' });
+      await page.goto('about:blank');
+      await page.goto(`http://127.0.0.1:${PORT}/index.html#game_token=` + launchToken(), { waitUntil: 'load' });
+      await page.waitForFunction(() => document.documentElement.lang === 'fr-CA');
+      await page.waitForSelector('#overlay-root button[data-act="practice"]');
+      if ((await page.locator('#overlay-root button[data-act="practice"]').textContent()).trim() !== 'Entraînement') throw new Error('title not in French');
+      await page.locator('#overlay-root button[data-act="practice"]').click();
+      await page.locator('#overlay-root button[data-act="go"]').click();
+      await page.locator('#overlay-root button[data-act="go"]').click();
+      await waitActive(page);
+      const before = await page.locator('#hud-progress').textContent();
+      await page.keyboard.press('Escape');
+      await page.locator('#overlay-root button[data-act="settings"]').click();
+      const choice = page.locator('[data-game-language="choice"]');
+      await choice.scrollIntoViewIfNeeded();
+      const auto = await choice.locator('option').first().textContent();
+      if (!/^Automatique — Français \(Canada\)$/.test(auto)) throw new Error('Automatic label not resolved: ' + auto);
+      await choice.selectOption('it-IT');
+      await page.waitForFunction(() => document.documentElement.lang === 'it-IT');
+      await page.waitForFunction(() => /Salvato/.test(document.querySelector('[data-game-language="status"]').textContent));
+      if (calls.settings['ui.language']?.choice !== 'it-IT') throw new Error('ui.language not saved: ' + JSON.stringify(calls.settings));
+      if ((await overlayHeading(page).textContent()).trim() !== 'Impostazioni') throw new Error('settings not re-rendered');
+      if (!/Qualità/.test(await page.locator('#gfx-box').textContent())) throw new Error('graphics box not re-rendered');
+      if (!/^Ondata/.test(await page.locator('#objective-text').textContent())) throw new Error('HUD not re-rendered');
+      if (!/trovati/.test(await page.locator('#hud-progress').textContent())) throw new Error('progress not re-rendered');
+      if ((await page.locator('#hud-progress').textContent()).split('/')[0] !== before.split('/')[0]) throw new Error('round changed by the language switch');
+      await page.locator('[data-game-report="title"]').scrollIntoViewIfNeeded();
+      await page.fill('[data-game-report="title"]', 'Test report');
+      await page.click('[data-game-report="send"]');
+      await page.waitForFunction(() => /Grazie/.test(document.querySelector('[data-game-report="status"]').textContent));
+      if (!calls.reports?.[0] || calls.reports[0].kind !== 'bug') throw new Error('report not posted');
+      await page.screenshot({ path: SHOT('language', vpName) });
+      if (vpName === 'mobile') {
+        await choice.selectOption('de-DE');
+        await page.waitForFunction(() => document.documentElement.lang === 'de-DE');
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        if (overflow > 0) throw new Error('German settings overflow by ' + overflow + 'px');
+        await page.screenshot({ path: SHOT('language-de', vpName) });
+      }
+      await choice.selectOption('auto');
+      await page.waitForFunction(() => document.documentElement.lang === 'fr-CA');
+      await page.locator('#overlay-root button[data-act="done"]').click();
+      await page.locator('#overlay-root button[data-act="resume"]').click();
+      await waitActive(page);
+      if (!/^Vague/.test(await page.locator('#objective-text').textContent())) throw new Error('HUD not back in French');
+      await page.unroute(/\/api\/v1\//);
+    });
   } finally {
     await context.close();
   }

@@ -26,7 +26,9 @@ candle burns down.
 
 | Path | Responsibility |
 |---|---|
-| `index.html` | Static shell: topbar, left rail (requests + progress), canvas holder, right rail (score + actions + object list), bottom tray, two ARIA live regions. Loads `rules.js`, `content.js`, `starhermit-sdk.js` and `platform.js` as classic scripts, then `game.js` as a module; an import map resolves `three` and `three/addons/`. |
+| `index.html` | Static shell: topbar, left rail (requests + progress), canvas holder, right rail (score + actions + object list), bottom tray, two ARIA live regions. Loads `sh-language.js`, `strings.js`, `rules.js`, `content.js`, `starhermit-sdk.js`, `i18n.js` and `platform.js` as classic scripts, then `game.js` as a module; an import map resolves `three` and `three/addons/`. |
+| `sh-language.js` | Shared StarHermit language preference (`window.StarHermitLanguage`), an unmodified copy of `tools/sh-language.js`. |
+| `strings.js`, `i18n.js` | Translation tables and object vocabulary (`HN_STRINGS`, `HN_NAMES`) and the localization runtime `window.HNI18N` (`T`, live-markup `h`, `objectName`, `hn-language` event) (§10). |
 | `style.css` | All presentation: token palette, three responsive layouts, high-contrast / large-text / reduced-motion variants, safe-area insets. |
 | `rules.js` | Pure deterministic rules engine (UMD → `window.HNRules` / `require`). Owns every state transition. |
 | `content.js` | Versioned content (UMD → `window.HNContent`): object vocabulary, themes, anchors, procedural level generation, tutorial script, offline validators. |
@@ -41,7 +43,8 @@ candle burns down.
 | `test.js` | `npm test` — 30 checks: rules legality, scoring, replay determinism, fuzz, content validation, migration, golden hashes, server API. |
 | `tests/e2e.mjs` | `npm run test:e2e` — Playwright playthrough of the real UI at desktop and mobile viewports. |
 | `tests/gfx.test.mjs` | `node --test` unit tests for `gfx.js` and `gfx-i18n.js` (run by `npm test`). |
-| `tests/platform.test.mjs` | `node --test` unit tests for `platform.js` over the SDK with a stubbed fetch (run by `npm test`). |
+| `tests/platform.test.mjs` | `node --test` unit tests for `platform.js` over the SDK with a stubbed fetch, incl. the save-conflict reload (run by `npm test`). |
+| `tests/i18n.test.mjs` | `node --test`: every used key in all nine locales, every object name localized and unique per locale, live switching (run by `npm test`). |
 | `sfx/` | 16 Opus one-shots, `manifest.txt` (canonical), `manifest.json` (generator input), `manifest.md` (generated table). |
 | `assets/` | `keyart-nook.webp` (title backdrop), `wall-paper.webp` (room wall tile). |
 | `data/store.json` | Server-side durable store: daily boards, saves, achievements. Never served. |
@@ -468,26 +471,39 @@ generated with MOSS-SoundEffect v2.0 at 100 inference steps.
 
 ## 10. Localization
 
-**Ships today:** `en-US` only. Every visible string is an English literal inside `game.js`,
-`content.js` (object labels, adjectives, tutorial prompts) and `index.html`; `<html lang="en">` is
-fixed. The nine required locales — en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT —
-are **not** implemented for the game as a whole; see §17. The one exception is the Settings →
-Graphics section, whose strings ship in all nine locales (`gfx-i18n.js`), chosen from
-`navigator.languages` with region → base-language → en-US fallback (e.g. es-MX → es-419,
-pt-PT → pt-BR). What the design commits to when the rest lands:
+Nine locales ship: **en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT**. Every visible
+string — static markup in `index.html` (headings, buttons, rails, aria-labels), the overlay screens
+(title, modes, journey, practice, challenge, round setup, countdown, pause, settings, help, results,
+progress, score chase), the HUD, status line, live-region announcements and errors, achievements,
+tutorial prompts and theme names — is an English key in `strings.js` with es-419, de-DE, fr-FR,
+pt-BR and it-IT translations; en-GB, es-ES and fr-CA carry only their differences. The Graphics
+section (`gfx-i18n.js`) and the account strings (`SH_TEXT` in `game.js`) have their own nine-locale
+tables and follow the same language. "Hidden Nook" and "StarHermit" are not translated.
 
-- Strings live in `data/i18n/<locale>.json`, one flat key space, loaded by `server.js` as static
-  data and fetched once at boot with `en-US` as the always-bundled fallback.
-- Language is chosen by, in order: an explicit Settings picker persisted in `hn-settings-v1`; the
-  StarHermit launch profile locale; `navigator.languages`; then `en-US`. Region variants fall back
-  to their base language before falling back to English.
-- Object names are the hard part and are composed, not concatenated: the vocabulary ships as
-  `{ adjective, noun }` keys plus a per-locale pattern (`"{adj} {noun}"` for English,
-  `"{noun} {adj}"` with gender agreement for the Romance locales), so "crimson teapot" localises
-  correctly rather than word-by-word.
-- Layout allowance: rails and chips are sized for +40% string growth (German), the request strip
-  wraps rather than truncates, and no string is baked into an image — `coverart.png` is the sole
-  exception and is platform art, not in-game text.
+- **Object names are composed, not concatenated.** The rules keep the English "<adjective> <noun>"
+  name (it is part of replays and validation); `strings.js` (`HN_NAMES`) holds each language's
+  vocabulary — 20 nouns with grammatical gender, 20 adjectives with their gendered forms — and the
+  word order: noun-first with agreement for Spanish, French, Portuguese and Italian ("taza de latón",
+  "bougie cramoisie"), a strong-declined adjective first for German ("messingfarbener Becher",
+  "hölzernes Buch"). Every one of the 400 combinations is distinct in every locale (unit-tested).
+  The request chips, object list, objective line and announcements show the localized name; the
+  shape tag shows the localized noun.
+- **Language setting:** Settings (top bar, title, and pause menu) contains the shared
+  `game-options.js` **Language → Game language** selector: **Automatic — <resolved language>** plus
+  the nine locales by native name, with a sync status line.
+- **Resolution** (`sh-language.js`): explicit game choice → for Automatic, the StarHermit account's
+  `preferredLanguage` (`GET /api/v1/me/language`, signed in only) → `navigator.languages` → en-US,
+  mapped to the nearest shipped locale (`es-MX → es-419`, `pt-PT → pt-BR`). The choice is stored per
+  player in `localStorage['hidden-nook.language.<user|guest>']` and, signed in, in the per-player
+  settings key `ui.language` as `{ choice }`; the game never writes the platform preference.
+  `?lang=` forces a locale for the page load (QA links) and hides the selector.
+- **Live switching:** overlay templates emit `data-i18n` elements, so a change re-renders the open
+  screen in place (no rebuild), plus the HUD, status line and static markup, and sets `<html lang>`;
+  the round and its clock are untouched. The Graphics rows live in their own box (`#gfx-box`) and
+  redraw only themselves (also when a preset is chosen), so the shared Sound / frame-rate /
+  Language / Report sections beside them survive.
+- **Layout:** chips and the request strip wrap; tray buttons may break long words rather than clip;
+  German, French and Italian fit at 390 px wide.
 
 ---
 
@@ -533,8 +549,10 @@ before `game.js`; `Platform.init()` at boot calls `StarHermit.init()`.
 |---|---|
 | Identity | The SDK reads the launch token from `#game_token=` (or the `#access_token=` sign-in return), strips it, takes the slug from `game_scope` and renews it before expiry. Hosted mode is on while the SDK holds a token. If renewal is refused, a toast says the player is signed out, the sync chip hides and play continues locally. |
 | Sign-in | On `<id>.starhermit.com` without a token the title menu shows **Sign in with StarHermit** (`StarHermit.signIn()`); hidden when signed in and when running locally. |
-| Profile | The profile nickname (fallback `"Player " + id prefix`) is shown in the status line ("Signed in as …") with the account avatar beside it. `GET /api/v1/me` is never called and usernames never displayed. |
-| Cloud save | The checksummed progress document lives in the slot `game:<slug>` via the SDK. Load prefers the remote snapshot when intact and at least as new (start-up never restamps the local copy, and pushes it only when it holds progress newer than the slot); saves debounce 2 s and flush with keepalive on `pagehide`/hidden; the sync chip (Saving… / Cloud synced / Offline — local only) sits under the status line. `localStorage` remains the offline cache. |
+| Profile | The profile nickname (localized fallback "Player <id prefix>") is shown in the status line ("Signed in as …") with the account avatar beside it. `GET /api/v1/me` is never called and usernames never displayed. |
+| Cloud save | The checksummed progress document lives in the slot `game:<slug>` via the SDK. Load prefers the remote snapshot when intact and at least as new (start-up never restamps the local copy, and pushes it only when it holds progress newer than the slot); saves debounce 2 s and flush with keepalive on `pagehide`/hidden; the sync chip (Saving… / Cloud synced / Offline — local only) sits under the status line. `localStorage` remains the offline cache. Writes are conditional on the version last read: when another device saved first (`saveconflict`), the game reloads the cloud document and merges it — furthest journey stage, better best score per level, union of achievements (earliest unlock), larger all-time found count, the newer daily streak, lesson done if done anywhere; the round in progress is untouched — then saves the merged document. |
+| Reports | Settings → **Report a problem** (signed in, from `game-options.js`) files a bug report through `StarHermit.reportBug` with a small non-personal `context.json`; uncaught errors are filed as crash reports through `StarHermit.captureCrashes` (capped by the SDK). |
+| Language | The per-player `ui.language` setting and the account's preferred language drive the game language (§10). |
 | Settings KV | Every Settings change (volumes, accessibility, left-handed, hold-to-pan, haptics, graphics, camera preset) is mirrored with `patchSettings` (600 ms debounce); at boot the platform values are applied over the local ones. |
 | Controls | `keydown` routes by `event.code` through `StarHermit.loadBindings`; Help lists the effective keys. |
 | Invite link | **Invite a friend** on the title menu (signed in only) copies `StarHermit.inviteLink()` and confirms with a toast. |
@@ -546,7 +564,7 @@ before `game.js`; `Platform.init()` at boot calls `StarHermit.init()`.
 | Telemetry | None. |
 
 Account strings (sign-in, invite, toasts, leaderboard line) are localized in the nine locales (`SH_TEXT` in
-`game.js`, locale from `pickLocale`).
+`game.js`, in the game language).
 
 **Deliberately not used.** Apart from the score post, there is no platform session logic, so
 matchmaking, session invites, chat, replays and platform achievements have nothing to drive them;
@@ -682,7 +700,6 @@ console error or warning, or page error, at either viewport.
 
 ## 16. Known limitations
 
-- **English only** apart from the Graphics settings section. See §10 and §17; the nine-locale requirement is otherwise unmet.
 - **Non-requested decoys are pickable and penalised, but decoys never become requested.** A level's
   requested set is fixed at generation, so a player who memorises a daily's decoys has a small edge
   on a retry (dailies are unranked).
@@ -705,11 +722,7 @@ console error or warning, or page error, at either viewport.
 
 ## 17. Design intent not yet implemented
 
-1. **Localization into the nine required locales.** The loading, selection and composed-name design
-   in §10 is decided but no locale files or lookup layer exist; every string is currently an English
-   literal in `game.js` / `content.js`.
-2. **A settings language picker**, which §10 assumes as the first source of the locale choice.
-3. **Anchor de-collision at generation time** (a minimum separation pass in `C.generateLevel`), which
+1. **Anchor de-collision at generation time** (a minimum separation pass in `C.generateLevel`), which
    would remove the overlap noted in §16.
 
 ## Browser interference

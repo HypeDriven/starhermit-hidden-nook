@@ -12,6 +12,13 @@ import { gfxStrings, pickLocale } from './gfx-i18n.js';
 
 const R = window.HNRules;
 const C = window.HNContent;
+// Localization (i18n.js): T() translates now; h() emits markup that follows
+// later language changes; object names are localized from their English form.
+const I18N = window.HNI18N;
+const T = I18N.T, h = I18N.h;
+const objName = (n) => I18N.objectName(n);
+const K = (key) => key; // marks a translation key that is rendered later through T()/h()
+const themeName = (id) => { const t = C.THEMES.find((x) => x.id === id); return t ? t.name : id; };
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,7 +40,7 @@ function actionFor(code) {
   return null;
 }
 function keyNames(action) {
-  const names = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Escape: 'Esc', Space: 'Space', Enter: 'Enter' };
+  const names = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Escape: 'Esc', Space: T('Space'), Enter: T('Enter') };
   return (bindings[action] || []).map((c) => names[c] || c.replace(/^Key/, '').replace(/^Digit/, '')).join(' / ');
 }
 
@@ -140,7 +147,8 @@ const SH_TEXT = (() => {
   "lbNotPosted": "Punteggio non inviato alla classifica."
  }
 };
-  return all[pickLocale(navigator.languages || [navigator.language])] || all['en-US'];
+  // Follows the game language (Settings → Language), read at use time.
+  return new Proxy({}, { get: (_, k) => (all[I18N.lang] || all['en-US'])[k] });
 })();
 
 // ===========================================================================
@@ -276,6 +284,28 @@ const Progress = {
     // Push only when local is genuinely newer (or the slot is empty) and
     // holds real progress; never seed the cloud with an untouched fresh doc.
     if (this.doc !== remote && localAt > 0) this.scheduleCloudPush();
+  },
+  // Another device saved since our last load (conditional write refused):
+  // keep the best of both — furthest journey, better best score per level,
+  // union of achievements (earliest unlock), larger all-time count, the newer
+  // daily streak, lesson done if done anywhere — then save the merged doc.
+  mergeRemote(remote) {
+    const intact = remote && remote.v === 2 && remote.checksum === this.checksumOf(remote);
+    if (intact) {
+      const d = this.doc;
+      d.journeyUnlocked = Math.max(d.journeyUnlocked | 0, remote.journeyUnlocked | 0);
+      for (const [k, v] of Object.entries(remote.bestScores || {})) {
+        if (!d.bestScores[k] || R.compareResults(v, d.bestScores[k]) < 0) d.bestScores[k] = v;
+      }
+      for (const [k, t] of Object.entries(remote.achievements || {})) {
+        d.achievements[k] = d.achievements[k] ? Math.min(d.achievements[k], t) : t;
+      }
+      d.foundTotal = Math.max(d.foundTotal | 0, remote.foundTotal | 0);
+      const rs = remote.dailyStreak || {}, ls = d.dailyStreak || {};
+      if ((rs.last || '') > (ls.last || '') || (rs.last === ls.last && (rs.count | 0) > (ls.count | 0))) d.dailyStreak = { last: rs.last || null, count: rs.count | 0 };
+      d.tutorialDone = !!(d.tutorialDone || remote.tutorialDone);
+    }
+    this.save();
   },
   unlock(key) {
     if (this.doc.achievements[key]) return false;
@@ -1417,7 +1447,12 @@ const UI = {
     // re-set next tick so repeated messages are announced
     setTimeout(() => { el.textContent = msg; }, 30);
   },
-  setStatus(msg) { $('status-line').textContent = msg || ''; },
+  // Status line: a translation key (+ vars) so it follows language changes.
+  setStatus(key, vars) {
+    this._status = key ? [key, vars] : null;
+    $('status-line').textContent = key ? T(key, vars) : '';
+  },
+  refreshStatus() { if (this._status) $('status-line').textContent = T(this._status[0], this._status[1]); },
   setAvatar(url) {
     let img = $('hn-avatar');
     if (!url) { if (img) img.remove(); return; }
@@ -1449,7 +1484,7 @@ const UI = {
     if (!el) return;
     if (!Platform.hosted) { el.hidden = true; return; }
     el.hidden = false;
-    el.textContent = { saving: 'Saving…', synced: 'Cloud synced', offline: 'Offline — local only' }[state] || state;
+    el.textContent = { saving: T('Saving…'), synced: T('Cloud synced'), offline: T('Offline — local only') }[state] || state;
     el.dataset.state = state;
   },
 
@@ -1462,7 +1497,7 @@ const UI = {
     panel.className = 'hn-overlay';
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
-    if (opts && opts.label) panel.setAttribute('aria-label', opts.label);
+    if (opts && opts.label) { panel.setAttribute('aria-label', T(opts.label)); panel.setAttribute('data-i18n-aria', opts.label); }
     panel.innerHTML = html;
     root.appendChild(panel);
     const first = panel.querySelector('button, input, select, [tabindex]');
@@ -1521,9 +1556,10 @@ const Game = {
     Settings.load();
     Platform.init();
     Platform.onSaved((ok) => UI.setSync(ok ? 'synced' : 'offline'));
+    Platform.onConflict((remote) => Progress.mergeRemote(remote));
     Platform.onAuth = (signedIn) => {
       UI.setSync(signedIn ? 'synced' : 'offline');
-      if (!signedIn) { UI.toast(SH_TEXT.signedOut); UI.setStatus('Offline mode — progress is stored locally'); }
+      if (!signedIn) { UI.toast(SH_TEXT.signedOut); UI.setStatus('Offline mode — progress is stored locally'); }   // setStatus takes keys
       Platform.syncTime();
       if (this.phase === 'title') this.toTitle();
     };
@@ -1534,7 +1570,7 @@ const Game = {
       this.renderer = new NookRenderer($('canvas-holder'));
       window.__hnRenderer = this.renderer;
     } catch (e) {
-      $('canvas-holder').innerHTML = '<p style="padding:2rem;max-width:46ch">This device or browser does not support WebGL, which Hidden Nook needs to draw the room. Your settings and progress are preserved.</p>';
+      $('canvas-holder').innerHTML = '<p style="padding:2rem;max-width:46ch">' + h('This device or browser does not support WebGL, which Hidden Nook needs to draw the room. Your settings and progress are preserved.') + '</p>';
       UI.setStatus('WebGL unavailable');
       return;
     }
@@ -1547,7 +1583,7 @@ const Game = {
       UI.setStatus('Connecting…');
       await Promise.all([Platform.loadProfile(), Progress.cloudPull(),
         Platform.getSettings().then((st) => Settings.adopt(st))]);
-      UI.setStatus('Signed in as ' + (Platform.nickname || 'Player'));
+      UI.setStatus('Signed in as {name}', { name: Platform.nickname || T('Player') });
       UI.setAvatar(Platform.avatar);
     } else {
       UI.setStatus('Offline mode — progress is stored locally');
@@ -1570,6 +1606,18 @@ const Game = {
     };
     requestAnimationFrame(loop);
 
+    // Language change: markup re-applies itself (i18n.js); refresh the parts
+    // computed from live state. The round and its clock are untouched.
+    document.addEventListener('hn-language', () => {
+      UI.refreshStatus();
+      UI.setSync($('sync-status') && $('sync-status').dataset.state || 'synced');
+      if (this.state && (this.phase === 'active' || this.phase === 'paused' || this.phase === 'countdown')) this.buildHud();
+      const inv = $('btn-invite'); if (inv) inv.textContent = SH_TEXT.invite;
+      const sin = $('btn-signin'); if (sin) sin.textContent = SH_TEXT.signIn;
+      const lb = $('results-lb'); if (lb && this._lbLine) lb.textContent = this._lbLine();
+      if ($('gfx-box')) this.renderGfxBox();
+    });
+
     this.toTitle();
   },
 
@@ -1582,23 +1630,23 @@ const Game = {
     const dailyDay = new Date(Platform.now()).toISOString().slice(0, 10);
     const panel = UI.showOverlay(`
       <h2>Hidden Nook</h2>
-      <p>A miniature room full of small things. Find every object named in the request strip.</p>
+      <p>${h('A miniature room full of small things. Find every object named in the request strip.')}</p>
       <div class="hn-menu">
-        <button class="hn-btn hn-btn-primary" data-act="play">${p.tutorialDone ? 'Play' : 'Play (starts with a quick lesson)'}</button>
-        <button class="hn-btn" data-act="daily">Daily challenge <span class="hn-badge">${UI.esc(dailyDay)}</span></button>
-        <button class="hn-btn" data-act="journey">Journey <span class="hn-badge">stage ${Math.min(p.journeyUnlocked + 1, C.JOURNEY_COUNT)} / ${C.JOURNEY_COUNT}</span></button>
-        <button class="hn-btn" data-act="practice">Practice</button>
-        <button class="hn-btn" data-act="challenge">Challenge</button>
-        <button class="hn-btn" data-act="scores">Score chase</button>
-        ${p.tutorialDone ? '<button class="hn-btn" data-act="learn">Replay lesson</button>' : ''}
+        <button class="hn-btn hn-btn-primary" data-act="play">${p.tutorialDone ? h('Play') : h('Play (starts with a quick lesson)')}</button>
+        <button class="hn-btn" data-act="daily">${h('Daily challenge')} <span class="hn-badge">${UI.esc(dailyDay)}</span></button>
+        <button class="hn-btn" data-act="journey">${h('Journey')} <span class="hn-badge">${h('stage {n} / {total}', { n: Math.min(p.journeyUnlocked + 1, C.JOURNEY_COUNT), total: C.JOURNEY_COUNT })}</span></button>
+        <button class="hn-btn" data-act="practice">${h('Practice')}</button>
+        <button class="hn-btn" data-act="challenge">${h('Challenge')}</button>
+        <button class="hn-btn" data-act="scores">${h('Score chase')}</button>
+        ${p.tutorialDone ? `<button class="hn-btn" data-act="learn">${h('Replay lesson')}</button>` : ''}
         ${Platform.hosted ? `<button class="hn-btn" data-act="invite" id="btn-invite">${UI.esc(SH_TEXT.invite)}</button>` : ''}
         ${Platform.canSignIn() ? `<button class="hn-btn" data-act="signin" id="btn-signin">${UI.esc(SH_TEXT.signIn)}</button>` : ''}
       </div>
-      <h3>Achievements</h3>
+      <h3>${h('Achievements')}</h3>
       <div>${Object.keys(ACTION_ACHIEVEMENTS).map((k) => {
         const a = ACTION_ACHIEVEMENTS[k];
         const got = !!p.achievements[k];
-        return `<span class="hn-badge ${got ? 'unlocked' : ''}" title="${UI.esc(a.desc)}">${got ? '✓ ' : ''}${UI.esc(a.name)}</span>`;
+        return `<span class="hn-badge ${got ? 'unlocked' : ''}" ${I18N.attr('title', a.desc)}>${got ? '✓ ' : ''}${h(a.name)}</span>`;
       }).join('')}</div>
     `, { label: 'Title screen' });
     panel.classList.add('hn-overlay-keyart');
@@ -1632,13 +1680,13 @@ const Game = {
   toModeSelect() {
     this.phase = 'mode-select';
     const panel = UI.showOverlay(`
-      <h2>Choose a mode</h2>
+      <h2>${h('Choose a mode')}</h2>
       <div class="hn-menu">
-        <button class="hn-btn hn-btn-primary" data-act="journey">Journey — authored stages, growing difficulty</button>
-        <button class="hn-btn" data-act="daily">Daily — one shared seed per UTC day</button>
-        <button class="hn-btn" data-act="practice">Practice — unrated, undo allowed</button>
-        <button class="hn-btn" data-act="challenge">Challenge — move limits and speed targets</button>
-        <button class="hn-btn" data-act="back">Back</button>
+        <button class="hn-btn hn-btn-primary" data-act="journey">${h('Journey — authored stages, growing difficulty')}</button>
+        <button class="hn-btn" data-act="daily">${h('Daily — one shared seed per UTC day')}</button>
+        <button class="hn-btn" data-act="practice">${h('Practice — unrated, undo allowed')}</button>
+        <button class="hn-btn" data-act="challenge">${h('Challenge — move limits and speed targets')}</button>
+        <button class="hn-btn" data-act="back">${h('Back')}</button>
       </div>
     `, { label: 'Mode select' });
     panel.addEventListener('click', (ev) => {
@@ -1662,13 +1710,13 @@ const Game = {
       const open = i <= unlocked;
       const best = Progress.doc.bestScores['journey-' + (i + 1)];
       cells += `<button class="hn-btn" data-stage="${i}" ${open ? '' : 'disabled'}>
-        Stage ${i + 1}${best ? ` <span class="hn-badge">${best.score}</span>` : ''}${open ? '' : ' 🔒'}</button>`;
+        ${h('Stage {n}', { n: i + 1 })}${best ? ` <span class="hn-badge">${best.score}</span>` : ''}${open ? '' : ' 🔒'}</button>`;
     }
     const panel = UI.showOverlay(`
-      <h2>Journey</h2>
-      <p>Ranked stages. New concepts appear one at a time, then combine. Mastery stages every fifth.</p>
+      <h2>${h('Journey')}</h2>
+      <p>${h('Ranked stages. New concepts appear one at a time, then combine. Mastery stages every fifth.')}</p>
       <div class="hn-menu" style="max-height:46vh;overflow-y:auto">${cells}</div>
-      <div class="hn-btn-row"><button class="hn-btn" data-act="back">Back</button></div>
+      <div class="hn-btn-row"><button class="hn-btn" data-act="back">${h('Back')}</button></div>
     `, { label: 'Journey stages' });
     panel.addEventListener('click', (ev) => {
       const s = ev.target.closest('[data-stage]');
@@ -1681,15 +1729,15 @@ const Game = {
   toPracticeSetup() {
     this.phase = 'mode-select';
     const panel = UI.showOverlay(`
-      <h2>Practice</h2>
-      <p>Unrated. Undo is allowed, timers are relaxed, and ratings are unaffected.</p>
-      <div class="hn-field"><label for="pf-diff">Difficulty</label>
-        <select id="pf-diff"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select></div>
-      <div class="hn-field"><label for="pf-seed">Seed (inspectable)</label>
+      <h2>${h('Practice')}</h2>
+      <p>${h('Unrated. Undo is allowed, timers are relaxed, and ratings are unaffected.')}</p>
+      <div class="hn-field"><label for="pf-diff">${h('Difficulty')}</label>
+        <select id="pf-diff"><option value="easy" data-i18n="Easy">${UI.esc(T('Easy'))}</option><option value="medium" selected data-i18n="Medium">${UI.esc(T('Medium'))}</option><option value="hard" data-i18n="Hard">${UI.esc(T('Hard'))}</option></select></div>
+      <div class="hn-field"><label for="pf-seed">${h('Seed (inspectable)')}</label>
         <input id="pf-seed" type="number" min="0" max="999999999" value="${Math.floor(Math.random() * 1e9)}" style="width:150px;background:var(--hn-panel2);color:inherit;border:1px solid var(--hn-line);border-radius:6px;padding:0.35rem;min-height:40px" /></div>
       <div class="hn-btn-row">
-        <button class="hn-btn hn-btn-primary" data-act="go">Start practice</button>
-        <button class="hn-btn" data-act="back">Back</button>
+        <button class="hn-btn hn-btn-primary" data-act="go">${h('Start practice')}</button>
+        <button class="hn-btn" data-act="back">${h('Back')}</button>
       </div>
     `, { label: 'Practice setup' });
     panel.addEventListener('click', (ev) => {
@@ -1707,13 +1755,13 @@ const Game = {
   toChallengeSetup() {
     this.phase = 'mode-select';
     const panel = UI.showOverlay(`
-      <h2>Challenge</h2>
-      <p>Constrained goals. No undo.</p>
+      <h2>${h('Challenge')}</h2>
+      <p>${h('Constrained goals. No undo.')}</p>
       <div class="hn-menu">
-        <button class="hn-btn" data-ch="speed">Speed nook — 90 seconds, 8 objects</button>
-        <button class="hn-btn" data-ch="moves">Economy — only 14 taps for 10 objects</button>
-        <button class="hn-btn" data-ch="crowded">Crowded shelf — 14 objects, heavy decoys</button>
-        <button class="hn-btn" data-act="back">Back</button>
+        <button class="hn-btn" data-ch="speed">${h('Speed nook — 90 seconds, 8 objects')}</button>
+        <button class="hn-btn" data-ch="moves">${h('Economy — only 14 taps for 10 objects')}</button>
+        <button class="hn-btn" data-ch="crowded">${h('Crowded shelf — 14 objects, heavy decoys')}</button>
+        <button class="hn-btn" data-act="back">${h('Back')}</button>
       </div>
     `, { label: 'Challenge setup' });
     panel.addEventListener('click', (ev) => {
@@ -1746,19 +1794,19 @@ const Game = {
     this.level = level;
     const v = C.validateLevel(level);
     if (!v.ok) {
-      UI.showOverlay(`<h2>Content error</h2><p>This stage failed validation: ${UI.esc(v.errors.join('; '))}</p>
-        <div class="hn-btn-row"><button class="hn-btn" id="ce-back">Back</button></div>`, { label: 'Content error' });
+      UI.showOverlay(`<h2>${h('Content error')}</h2><p>${h('This stage failed validation: {errors}', { errors: v.errors.join('; ') })}</p>
+        <div class="hn-btn-row"><button class="hn-btn" id="ce-back">${h('Back')}</button></div>`, { label: 'Content error' });
       $('ce-back').addEventListener('click', () => this.toTitle());
       return;
     }
     const rulesText = this.describeRules(level, mode);
     const panel = UI.showOverlay(`
-      <h2>${UI.esc(this.modeName(mode))}</h2>
+      <h2>${h(this.modeName(mode))}</h2>
       ${rulesText}
-      <p class="rail-sub">Seed <code>${level.seed.toString(36)}</code> · content v${level.contentVersion} · theme ${UI.esc(level.theme)}</p>
+      <p class="rail-sub">${h('Seed {seed} · content v{version} · theme {theme}', { seed: level.seed.toString(36), version: level.contentVersion, theme: '@t:' + themeName(level.theme) })}</p>
       <div class="hn-btn-row">
-        <button class="hn-btn hn-btn-primary" data-act="go">Begin</button>
-        <button class="hn-btn" data-act="back">Back</button>
+        <button class="hn-btn hn-btn-primary" data-act="go">${h('Begin')}</button>
+        <button class="hn-btn" data-act="back">${h('Back')}</button>
       </div>
     `, { label: 'Round setup' });
     panel.addEventListener('click', (ev) => {
@@ -1771,18 +1819,18 @@ const Game = {
   },
 
   modeName(mode) {
-    return { learn: 'Lesson', journey: 'Journey', daily: 'Daily challenge', practice: 'Practice', challenge: 'Challenge' }[mode] || mode;
+    return { learn: K('Lesson'), journey: K('Journey'), daily: K('Daily challenge'), practice: K('Practice'), challenge: K('Challenge') }[mode] || mode;
   },
   describeRules(level, mode) {
     const n = level.items.filter((i) => i.requested).length;
-    const bits = [`Find <strong>${n}</strong> requested objects among ${level.items.length - n} decoys.`];
-    if (level.timeLimitSeconds) bits.push(`Time limit ${UI.fmtTime(level.timeLimitSeconds * 1000)}.`);
-    else bits.push('No timer — unhurried.');
-    if (level.moveLimit) bits.push(`At most ${level.moveLimit} taps.`);
-    bits.push(level.allowUndo ? 'Undo allowed.' : 'No undo.');
-    bits.push(`Hints cost ${R.SCORE.HINT_COST} points; wrong taps cost ${R.SCORE.INVALID_PENALTY}.`);
-    bits.push(mode === 'daily' && this.dailyInfo && this.dailyInfo.ranked ? 'Ranked: score is validated by replay.' : 'Not ranked.');
-    bits.push(mode === 'learn' ? 'Interactive lesson: one rule at a time.' : `Expected duration ~${UI.fmtTime(level.parSeconds * 1000)}.`);
+    const bits = [h('Find {n} requested objects among {decoys} decoys.', { n, decoys: level.items.length - n })];
+    if (level.timeLimitSeconds) bits.push(h('Time limit {time}.', { time: UI.fmtTime(level.timeLimitSeconds * 1000) }));
+    else bits.push(h('No timer — unhurried.'));
+    if (level.moveLimit) bits.push(h('At most {n} taps.', { n: level.moveLimit }));
+    bits.push(level.allowUndo ? h('Undo allowed.') : h('No undo.'));
+    bits.push(h('Hints cost {hint} points; wrong taps cost {wrong}.', { hint: R.SCORE.HINT_COST, wrong: R.SCORE.INVALID_PENALTY }));
+    bits.push(mode === 'daily' && this.dailyInfo && this.dailyInfo.ranked ? h('Ranked: score is validated by replay.') : h('Not ranked.'));
+    bits.push(mode === 'learn' ? h('Interactive lesson: one rule at a time.') : h('Expected duration ~{time}.', { time: UI.fmtTime(level.parSeconds * 1000) }));
     return '<p>' + bits.join('<br>') + '</p>';
   },
 
@@ -1797,9 +1845,9 @@ const Game = {
     if (mode === 'learn') this.tutorialStep = 0;
     this._timerWarned = false;
     const reduced = Settings.get('reducedMotion');
-    const steps = reduced ? ['Go'] : ['3', '2', '1', 'Go'];
+    const steps = reduced ? [T('Go')] : ['3', '2', '1', T('Go')];
     let i = 0;
-    const panel = UI.showOverlay('<div class="hn-countdown" role="timer" aria-label="Countdown">3</div>', { label: 'Countdown' });
+    const panel = UI.showOverlay(`<div class="hn-countdown" role="timer" ${I18N.attr('aria-label', 'Countdown')}>3</div>`, { label: 'Countdown' });
     const div = panel.querySelector('.hn-countdown');
     const iv = setInterval(() => {
       i += 1;
@@ -1826,7 +1874,7 @@ const Game = {
     $('btn-undo').hidden = !this.state.allowUndo;
     $('tray-undo').hidden = !this.state.allowUndo;
     $('hud-timer').hidden = !this.state.timeLimitMs;
-    UI.announce('Round started. ' + this.waveText());
+    UI.announce(T('Round started. {wave}', { wave: this.waveText() }));
     if (this.state.mode === 'learn') this.showTutorialPrompt();
   },
 
@@ -1838,8 +1886,8 @@ const Game = {
   },
   waveText() {
     const set = R.currentWaveSet(this.state);
-    const names = Array.from(set).map((i) => this.state.items[i].name);
-    return names.length ? 'Find: ' + names.join(', ') : 'All waves cleared';
+    const names = Array.from(set).map((i) => objName(this.state.items[i].name));
+    return names.length ? T('Find: {names}', { names: names.join(', ') }) : T('All waves cleared');
   },
   refreshRequestStrip() {
     const ul = $('request-strip');
@@ -1855,16 +1903,16 @@ const Game = {
       sw.style.background = '#' + new THREE.Color(this.level.items[idx].color).getHexString();
       li.appendChild(sw);
       const nm = document.createElement('span');
-      nm.textContent = it.name;
+      nm.textContent = objName(it.name);
       li.appendChild(nm);
       const tag = document.createElement('span');
       tag.className = 'shape-tag';
-      tag.textContent = this.level.items[idx].kind;
+      tag.textContent = I18N.kindName(this.level.items[idx].kind);
       li.appendChild(tag);
-      li.setAttribute('aria-label', it.name + (it.found ? ', found' : ', not found'));
+      li.setAttribute('aria-label', T(it.found ? '{name}, found' : '{name}, not found', { name: objName(it.name) }));
       ul.appendChild(li);
     }
-    $('objective-text').textContent = 'Wave ' + (this.state.wave + 1) + ' of ' + this.state.waves.length + ' — ' + this.waveText();
+    $('objective-text').textContent = T('Wave {n} of {total} — {wave}', { n: this.state.wave + 1, total: this.state.waves.length, wave: this.waveText() });
   },
   refreshTargetList() {
     const ul = $('sr-target-list');
@@ -1875,8 +1923,8 @@ const Game = {
       b.type = 'button';
       b.className = 'hn-target-item' + (it.found ? ' found' : '');
       b.dataset.index = i;
-      b.innerHTML = `<span>${UI.esc(it.name)}</span><span class="state-tag">${it.found ? 'found' : ''}</span>`;
-      b.setAttribute('aria-label', it.name + (it.found ? ', found' : ''));
+      b.innerHTML = `<span>${UI.esc(objName(it.name))}</span><span class="state-tag">${it.found ? UI.esc(T('found')) : ''}</span>`;
+      b.setAttribute('aria-label', it.found ? T('{name}, found', { name: objName(it.name) }) : objName(it.name));
       b.addEventListener('click', () => this.handleTap(i));
       li.appendChild(b);
       ul.appendChild(li);
@@ -1886,7 +1934,7 @@ const Game = {
     $('hud-score').textContent = String(this.state.score);
     const found = this.state.items.filter((i) => i.found).length;
     const total = this.level.items.filter((it) => it.requested).length;
-    $('hud-progress').textContent = found + ' / ' + total + ' found';
+    $('hud-progress').textContent = T('{found} / {total} found', { found, total });
     const pct = total ? Math.round((found / total) * 100) : 0;
     $('progressbar-fill').style.width = pct + '%';
     $('progressbar').setAttribute('aria-valuenow', String(pct));
@@ -1921,15 +1969,16 @@ const Game = {
   },
 
   explainError(err) {
-    return {
-      'already-found': 'Already found that one.',
-      'no-such-object': 'Nothing there.',
-      'hints-disabled': 'Hints are disabled in this round.',
-      'nothing-to-hint': 'Nothing left to hint.',
-      'undo-disabled': 'Undo is not allowed in this mode.',
-      'nothing-to-undo': 'Nothing to undo.',
-      'round-over': 'The round is over.',
-    }[err] || 'That action is not allowed: ' + err;
+    switch (err) {
+      case 'already-found': return T('Already found that one.');
+      case 'no-such-object': return T('Nothing there.');
+      case 'hints-disabled': return T('Hints are disabled in this round.');
+      case 'nothing-to-hint': return T('Nothing left to hint.');
+      case 'undo-disabled': return T('Undo is not allowed in this mode.');
+      case 'nothing-to-undo': return T('Nothing to undo.');
+      case 'round-over': return T('The round is over.');
+      default: return T('That action is not allowed: {error}', { error: err });
+    }
   },
 
   handleEvents(events) {
@@ -1937,26 +1986,26 @@ const Game = {
       if (ev.type === 'found') {
         this.renderer.markFound(ev.index);
         Audio.play('found', this.state.seed + this.state.tick);
-        UI.announce('Found: ' + ev.name);
+        UI.announce(T('Found: {name}', { name: objName(ev.name) }));
         this.vibrate(30);
         if (this.state.mode === 'learn') this.advanceTutorial('find');
       } else if (ev.type === 'invalid') {
         Audio.play('invalid');
-        UI.announce('That is not on the request strip. −' + R.SCORE.INVALID_PENALTY + ' points.', true);
+        UI.announce(T('That is not on the request strip. −{n} points.', { n: R.SCORE.INVALID_PENALTY }), true);
         this.vibrate([40, 40, 40]);
         if (this.state.mode === 'learn') this.advanceTutorial('wrong');
       } else if (ev.type === 'wave-clear') {
         Audio.play('wave');
-        UI.announce('Request strip cleared. Next set revealed.');
+        UI.announce(T('Request strip cleared. Next set revealed.'));
         if (this.state.mode === 'learn') this.advanceTutorial('wave');
       } else if (ev.type === 'hint') {
         this.renderer.markHinted(ev.index);
         Audio.play('hint');
-        UI.announce('Hint: look for the ' + ev.name + ' — it is glowing.');
+        UI.announce(T('Hint: look for the {name} — it is glowing.', { name: objName(ev.name) }));
         if (this.state.mode === 'learn') this.advanceTutorial('hint');
       } else if (ev.type === 'undo') {
         Audio.play('undo');
-        UI.announce('Undone.');
+        UI.announce(T('Undone.'));
         for (const [i, v] of this.renderer.itemViews) {
           if (v.found !== this.state.items[i].found) {
             if (this.state.items[i].found) this.renderer.markFound(i);
@@ -2035,41 +2084,42 @@ const Game = {
     Progress.save();
 
     // Dailies are unranked: the score is kept with local (and cloud) progress.
-    const submitHtml = s.mode === 'daily' ? '<p>Daily score saved to your progress.</p>' : '';
+    const submitHtml = s.mode === 'daily' ? `<p>${h('Daily score saved to your progress.')}</p>` : '';
 
     // Signed in, finished Journey and Daily rounds post their total to the
     // StarHermit high-score board; the line below shows the player's rank.
     const lbPost = Platform.hosted && (s.mode === 'journey' || s.mode === 'daily');
-    const headline = won ? 'Nook cleared!' : (s.reason === 'time-up' ? 'Time ran out' : s.reason === 'move-limit' ? 'Out of taps' : 'Round over');
+    const headline = won ? K('Nook cleared!') : (s.reason === 'time-up' ? K('Time ran out') : s.reason === 'move-limit' ? K('Out of taps') : K('Round over'));
+    this._lbLine = () => SH_TEXT.lbPosting;
     const panel = UI.showOverlay(`
-      <h2>${headline}</h2>
-      <table class="hn-score-table" aria-label="Score breakdown">
-        <tr><td>Objects found (${bd.found})</td><td>+${bd.items}</td></tr>
-        <tr><td>Request strips cleared</td><td>+${bd.waves}</td></tr>
-        <tr><td>Time bonus</td><td>+${bd.time}</td></tr>
-        <tr><td>Wrong taps (${s.invalids})</td><td>−${bd.invalidPenalty}</td></tr>
-        <tr><td>Hints used (${s.hintsUsed})</td><td>−${bd.hintCost}</td></tr>
-        ${bd.undoCost ? `<tr><td>Undos</td><td>−${bd.undoCost}</td></tr>` : ''}
-        <tr class="total"><td>Total</td><td>${bd.total}</td></tr>
+      <h2>${h(headline)}</h2>
+      <table class="hn-score-table" ${I18N.attr('aria-label', 'Score breakdown')}>
+        <tr><td>${h('Objects found ({n})', { n: bd.found })}</td><td>+${bd.items}</td></tr>
+        <tr><td>${h('Request strips cleared')}</td><td>+${bd.waves}</td></tr>
+        <tr><td>${h('Time bonus')}</td><td>+${bd.time}</td></tr>
+        <tr><td>${h('Wrong taps ({n})', { n: s.invalids })}</td><td>−${bd.invalidPenalty}</td></tr>
+        <tr><td>${h('Hints used ({n})', { n: s.hintsUsed })}</td><td>−${bd.hintCost}</td></tr>
+        ${bd.undoCost ? `<tr><td>${h('Undos')}</td><td>−${bd.undoCost}</td></tr>` : ''}
+        <tr class="total"><td>${h('Total')}</td><td>${bd.total}</td></tr>
       </table>
-      <p class="rail-sub">Time ${UI.fmtTime(s.elapsedMs)} · seed <code>${s.seed.toString(36)}</code> · ${bd.remaining} left unfound</p>
+      <p class="rail-sub">${h('Time {time} · seed {seed} · {n} left unfound', { time: UI.fmtTime(s.elapsedMs), seed: s.seed.toString(36), n: bd.remaining })}</p>
       ${submitHtml}
       ${lbPost ? `<p id="results-lb" role="status">${UI.esc(SH_TEXT.lbPosting)}</p>` : ''}
-      ${newAch.length ? `<p>Achievement unlocked: ${newAch.map((n) => `<span class="hn-badge unlocked">✓ ${UI.esc(n)}</span>`).join(' ')}</p>` : ''}
+      ${newAch.length ? `<p>${h('Achievement unlocked:')} ${newAch.map((n) => `<span class="hn-badge unlocked">✓ ${h(n)}</span>`).join(' ')}</p>` : ''}
       <div class="hn-btn-row">
-        <button class="hn-btn hn-btn-primary" data-act="retry">Retry</button>
-        ${s.mode === 'journey' && won && this.level.index + 1 < C.JOURNEY_COUNT ? '<button class="hn-btn" data-act="next">Next stage</button>' : ''}
-        ${s.mode === 'daily' ? '<button class="hn-btn" data-act="board">Leaderboard</button>' : ''}
-        <button class="hn-btn" data-act="menu">Menu</button>
+        <button class="hn-btn hn-btn-primary" data-act="retry">${h('Retry')}</button>
+        ${s.mode === 'journey' && won && this.level.index + 1 < C.JOURNEY_COUNT ? `<button class="hn-btn" data-act="next">${h('Next stage')}</button>` : ''}
+        ${s.mode === 'daily' ? `<button class="hn-btn" data-act="board">${h('Leaderboard')}</button>` : ''}
+        <button class="hn-btn" data-act="menu">${h('Menu')}</button>
       </div>
     `, { label: 'Results' });
     if (newAch.length) Audio.play('achieve');
-    UI.announce(headline + ' Total score ' + bd.total + '.', true);
+    UI.announce(T('{headline} Total score {score}.', { headline: '@t:' + headline, score: bd.total }), true);
     if (lbPost) {
       Platform.submitScore(bd.total).then((r) => {
+        this._lbLine = () => (!r.posted ? SH_TEXT.lbNotPosted : r.rank ? SH_TEXT.lbRank.replace('{rank}', r.rank) : SH_TEXT.lbPosted);
         const line = panel.querySelector('#results-lb');
-        if (line) line.textContent = !r.posted ? SH_TEXT.lbNotPosted
-          : r.rank ? SH_TEXT.lbRank.replace('{rank}', r.rank) : SH_TEXT.lbPosted;
+        if (line) line.textContent = this._lbLine();
       });
     }
     panel.addEventListener('click', (ev) => {
@@ -2088,13 +2138,13 @@ const Game = {
     this.phase = 'progression';
     const p = Progress.doc;
     const nextUnlock = p.journeyUnlocked < C.JOURNEY_COUNT
-      ? `Next journey stage: ${p.journeyUnlocked + 1}.`
-      : 'Journey complete — mastery track finished!';
+      ? h('Next journey stage: {n}.', { n: p.journeyUnlocked + 1 })
+      : h('Journey complete — mastery track finished!');
     const panel = UI.showOverlay(`
-      <h2>Progress</h2>
-      <p>${nextUnlock} Objects found all-time: <strong>${p.foundTotal}</strong>. Daily streak: <strong>${p.dailyStreak.count}</strong> day(s).</p>
+      <h2>${h('Progress')}</h2>
+      <p>${nextUnlock} ${h('Objects found all-time: {n}. Daily streak: {days} day(s).', { n: p.foundTotal, days: p.dailyStreak.count })}</p>
       <div class="hn-btn-row">
-        <button class="hn-btn hn-btn-primary" data-act="menu">Back to title</button>
+        <button class="hn-btn hn-btn-primary" data-act="menu">${h('Back to title')}</button>
       </div>
     `, { label: 'Progression' });
     panel.addEventListener('click', (ev) => {
@@ -2106,31 +2156,31 @@ const Game = {
   async showScores() {
     let rows = '';
     let note = '';
-    let who = 'Level';
+    let who = K('Level');
     if (Platform.hosted) {
       // Platform board is read-only (server-owned); nicknames via the profile route.
       let r = null;
       try { r = await Platform.leaderboard(50); } catch { r = { error: 'offline' }; }
       if (r && r.entries) {
-        who = 'Player';
+        who = K('Player');
         rows = r.entries.map((e) => `<tr${e.you ? ' class="hn-you"' : ''}><td>${e.rank}</td><td>${UI.esc(e.name)}</td><td>${e.score}</td></tr>`).join('')
-          || '<tr><td colspan="3">No entries yet.</td></tr>';
-        note = 'Global board — read-only on the platform. Personal bests travel with your save.';
+          || `<tr><td colspan="3">${h('No entries yet.')}</td></tr>`;
+        note = K('Global board — read-only on the platform. Personal bests travel with your save.');
       }
     }
     if (!rows) {
       // No board available (offline, or the platform has no leaderboardId):
       // personal bests are kept locally and cloud-saved with progress.
-      note = note || (Platform.hosted ? 'No platform leaderboard — showing personal bests (saved with your progress).' : 'Personal bests on this device.');
+      note = note || (Platform.hosted ? K('No platform leaderboard — showing personal bests (saved with your progress).') : K('Personal bests on this device.'));
       rows = Object.entries(Progress.doc.bestScores).slice(0, 20)
         .map(([k, v]) => `<tr><td>—</td><td>${UI.esc(k)}</td><td>${v.score}</td></tr>`).join('')
-        || '<tr><td colspan="3">No local scores yet.</td></tr>';
+        || `<tr><td colspan="3">${h('No local scores yet.')}</td></tr>`;
     }
     const panel = UI.showOverlay(`
-      <h2>Score chase</h2>
-      <p class="rail-sub">${note}</p>
-      <table class="hn-board"><thead><tr><th>#</th><th>${who}</th><th>Score</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="hn-btn-row"><button class="hn-btn" data-act="back">Back</button></div>
+      <h2>${h('Score chase')}</h2>
+      <p class="rail-sub">${h(note)}</p>
+      <table class="hn-board"><thead><tr><th>#</th><th>${h(who)}</th><th>${h('Score')}</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="hn-btn-row"><button class="hn-btn" data-act="back">${h('Back')}</button></div>
     `, { label: 'Leaderboard' });
     panel.addEventListener('click', (ev) => {
       if (ev.target.closest('[data-act="back"]')) { Audio.play('click'); this.toTitle(); }
@@ -2141,8 +2191,8 @@ const Game = {
   showTutorialPrompt() {
     const step = C.TUTORIAL_STEPS[this.tutorialStep];
     if (!step) return;
-    UI.setStatus('Lesson ' + (this.tutorialStep + 1) + '/' + C.TUTORIAL_STEPS.length + ': ' + step.text);
-    UI.announce('Lesson step ' + (this.tutorialStep + 1) + ': ' + step.text);
+    UI.setStatus('Lesson {n}/{total}: {text}', { n: this.tutorialStep + 1, total: C.TUTORIAL_STEPS.length, text: '@t:' + step.text });
+    UI.announce(T('Lesson step {n}: {text}', { n: this.tutorialStep + 1, text: '@t:' + step.text }));
   },
   advanceTutorial(action) {
     if (this.state.mode !== 'learn') return;
@@ -2165,7 +2215,7 @@ const Game = {
       Progress.doc.tutorialDone = true;
       Progress.save();
       UI.setStatus('Lesson complete — finish the round!');
-      UI.announce('Lesson complete. Finish clearing the room.');
+      UI.announce(T('Lesson complete. Finish clearing the room.'));
     } else this.showTutorialPrompt();
   },
 
@@ -2177,13 +2227,13 @@ const Game = {
     this.phase = 'paused';
     Audio.play('pause');
     const panel = UI.showOverlay(`
-      <h2>Paused</h2>
-      <p class="rail-sub">The clock is stopped.</p>
+      <h2>${h('Paused')}</h2>
+      <p class="rail-sub">${h('The clock is stopped.')}</p>
       <div class="hn-menu">
-        <button class="hn-btn hn-btn-primary" data-act="resume">Resume</button>
-        <button class="hn-btn" data-act="settings">Settings</button>
-        <button class="hn-btn" data-act="help">Help</button>
-        <button class="hn-btn hn-btn-danger" data-act="leave">Leave round</button>
+        <button class="hn-btn hn-btn-primary" data-act="resume">${h('Resume')}</button>
+        <button class="hn-btn" data-act="settings">${h('Settings')}</button>
+        <button class="hn-btn" data-act="help">${h('Help')}</button>
+        <button class="hn-btn hn-btn-danger" data-act="leave">${h('Leave round')}</button>
       </div>
     `, { label: 'Paused' });
     panel.addEventListener('click', (ev) => {
@@ -2201,19 +2251,19 @@ const Game = {
   showSettings(inRound) {
     const s = Settings.data;
     const panel = UI.showOverlay(`
-      <h2>Settings</h2>
-      <h3>Audio</h3>
-      <div class="hn-field"><label for="set-music">Music</label><input id="set-music" type="range" min="0" max="1" step="0.05" value="${s.music}"></div>
-      <div class="hn-field"><label for="set-sfx">Effects</label><input id="set-sfx" type="range" min="0" max="1" step="0.05" value="${s.sfx}"></div>
-      <div class="hn-field"><label for="set-amb">Ambience</label><input id="set-amb" type="range" min="0" max="1" step="0.05" value="${s.ambience}"></div>
-      <section id="gfx-section" class="hn-gfx" aria-labelledby="gfx-heading">${this.gfxSectionHtml()}</section>
-      <h3>Accessibility</h3>
-      <div class="hn-field"><label for="set-rm">Reduced motion</label><input id="set-rm" type="checkbox" ${s.reducedMotion ? 'checked' : ''}></div>
-      <div class="hn-field"><label for="set-hc">High contrast</label><input id="set-hc" type="checkbox" ${s.highContrast ? 'checked' : ''}></div>
-      <div class="hn-field"><label for="set-lt">Larger text</label><input id="set-lt" type="checkbox" ${s.largeText ? 'checked' : ''}></div>
-      <div class="hn-field"><label for="set-lh">Left-handed controls</label><input id="set-lh" type="checkbox" ${s.leftHanded ? 'checked' : ''}></div>
-      <div class="hn-field"><label for="set-hap">Haptics</label><input id="set-hap" type="checkbox" ${s.haptics ? 'checked' : ''}></div>
-      <div class="hn-btn-row"><button class="hn-btn hn-btn-primary" data-act="done">Done</button></div>
+      <h2>${h('Settings')}</h2>
+      <h3>${h('Audio')}</h3>
+      <div class="hn-field"><label for="set-music">${h('Music')}</label><input id="set-music" type="range" min="0" max="1" step="0.05" value="${s.music}"></div>
+      <div class="hn-field"><label for="set-sfx">${h('Effects')}</label><input id="set-sfx" type="range" min="0" max="1" step="0.05" value="${s.sfx}"></div>
+      <div class="hn-field"><label for="set-amb">${h('Ambience')}</label><input id="set-amb" type="range" min="0" max="1" step="0.05" value="${s.ambience}"></div>
+      <section id="gfx-section" class="hn-gfx" aria-labelledby="gfx-heading"><div id="gfx-box">${this.gfxSectionHtml()}</div></section>
+      <h3>${h('Accessibility')}</h3>
+      <div class="hn-field"><label for="set-rm">${h('Reduced motion')}</label><input id="set-rm" type="checkbox" ${s.reducedMotion ? 'checked' : ''}></div>
+      <div class="hn-field"><label for="set-hc">${h('High contrast')}</label><input id="set-hc" type="checkbox" ${s.highContrast ? 'checked' : ''}></div>
+      <div class="hn-field"><label for="set-lt">${h('Larger text')}</label><input id="set-lt" type="checkbox" ${s.largeText ? 'checked' : ''}></div>
+      <div class="hn-field"><label for="set-lh">${h('Left-handed controls')}</label><input id="set-lh" type="checkbox" ${s.leftHanded ? 'checked' : ''}></div>
+      <div class="hn-field"><label for="set-hap">${h('Haptics')}</label><input id="set-hap" type="checkbox" ${s.haptics ? 'checked' : ''}></div>
+      <div class="hn-btn-row"><button class="hn-btn hn-btn-primary" data-act="done">${h('Done')}</button></div>
     `, { label: 'Settings' });
     const bind = (id, key, isCheck) => {
       panel.querySelector('#' + id).addEventListener(isCheck ? 'change' : 'input', (ev) => {
@@ -2238,7 +2288,7 @@ const Game = {
 
   // ---- Settings → Graphics (gfx.js model; strings from gfx-i18n.js) ---------------
   gfxSectionHtml() {
-    const L = gfxStrings(navigator.languages || [navigator.language]);
+    const L = gfxStrings([I18N.lang]);
     const saved = Settings.get('graphics') || {};
     const r = this.renderer;
     const g = resolve(saved, r.detected);
@@ -2266,10 +2316,19 @@ const Game = {
       <p id="gfx-post-note" class="hn-gfx-note" hidden>${esc(L.postUnavailable)}</p>`;
   },
 
+  /** Redraw this game's own Graphics rows (never the shared sections beside them). */
+  renderGfxBox() {
+    const box = $('gfx-box');
+    if (!box) return;
+    if (this._gfxStrings) this._gfxStrings();
+    box.innerHTML = this.gfxSectionHtml();
+  },
+
   bindGfxSection(panel) {
     const sec = panel.querySelector('#gfx-section');
     if (!sec) return;
-    const L = gfxStrings(navigator.languages || [navigator.language]);
+    let L = gfxStrings([I18N.lang]);
+    this._gfxStrings = () => { L = gfxStrings([I18N.lang]); };
     const save = (next) => Settings.set('graphics', next);
     const refreshInfo = () => {
       const sum = document.getElementById('gfx-summary');
@@ -2283,9 +2342,11 @@ const Game = {
       const el = ev.target;
       const saved = Object.assign({}, Settings.get('graphics') || {});
       if (el.id === 'set-quality') {
-        // choosing a preset clears per-category overrides; re-render the "From preset" labels
+        // choosing a preset clears per-category overrides; re-render the "From preset"
+        // labels — only this game's own box, so the shared Sound / frame-rate /
+        // Language / Report sections that game-options.js mounted here survive
         save(choosePreset(saved, el.value));
-        sec.innerHTML = this.gfxSectionHtml();
+        this.renderGfxBox();
         sec.querySelector('#set-quality').focus();
       } else if (el.dataset.gfxCat) {
         if (el.value === 'preset') delete saved[el.dataset.gfxCat];
@@ -2310,22 +2371,22 @@ const Game = {
 
   showHelp(inRound) {
     const panel = UI.showOverlay(`
-      <h2>How to play</h2>
-      <p>Inspect the miniature room. The <strong>request strip</strong> on the left names the objects to find. Select each one in the scene to mark it found; finishing the strip reveals the next set.</p>
-      <h3>Controls</h3>
+      <h2>${h('How to play')}</h2>
+      <p>${h('Inspect the miniature room. The request strip on the left names the objects to find. Select each one in the scene to mark it found; finishing the strip reveals the next set.')}</p>
+      <h3>${h('Controls')}</h3>
       <p>
-        <span class="hn-badge">Drag / one finger</span> look around
-        <span class="hn-badge">Wheel / pinch</span> zoom
-        <span class="hn-badge">Tap / click</span> select an object<br>
-        <span class="hn-badge">${UI.esc(keyNames('prev'))} · ${UI.esc(keyNames('next'))}</span> move between objects
-        <span class="hn-badge">${UI.esc(keyNames('select'))}</span> select focused object
-        <span class="hn-badge">${UI.esc(keyNames('hint'))}</span> hint <span class="hn-badge">${UI.esc(keyNames('undo'))}</span> undo (practice)
-        <span class="hn-badge">${UI.esc(keyNames('resetView'))}</span> reset view <span class="hn-badge">${UI.esc(keyNames('pause'))}</span> pause<br>
-        <span class="hn-badge">Gamepad</span> stick moves focus, A selects, B pauses, Y hints
+        <span class="hn-badge">${h('Drag / one finger')}</span> ${h('look around')}
+        <span class="hn-badge">${h('Wheel / pinch')}</span> ${h('zoom')}
+        <span class="hn-badge">${h('Tap / click')}</span> ${h('select an object')}<br>
+        <span class="hn-badge">${UI.esc(keyNames('prev'))} · ${UI.esc(keyNames('next'))}</span> ${h('move between objects')}
+        <span class="hn-badge">${UI.esc(keyNames('select'))}</span> ${h('select focused object')}
+        <span class="hn-badge">${UI.esc(keyNames('hint'))}</span> ${h('hint')} <span class="hn-badge">${UI.esc(keyNames('undo'))}</span> ${h('undo (practice)')}
+        <span class="hn-badge">${UI.esc(keyNames('resetView'))}</span> ${h('reset view')} <span class="hn-badge">${UI.esc(keyNames('pause'))}</span> ${h('pause')}<br>
+        <span class="hn-badge">${h('Gamepad')}</span> ${h('stick moves focus, A selects, B pauses, Y hints')}
       </p>
-      <h3>Rules</h3>
-      <p>Only objects named in the strip count. Wrong taps cost ${R.SCORE.INVALID_PENALTY} points; hints cost ${R.SCORE.HINT_COST}. Finishing quickly (under par ${this.level ? UI.fmtTime(this.level.parSeconds * 1000) : '—'}) adds a time bonus. Ties break on completion, then fewer wrong taps, then faster time.</p>
-      <div class="hn-btn-row"><button class="hn-btn hn-btn-primary" data-act="done">Done</button></div>
+      <h3>${h('Rules')}</h3>
+      <p>${h('Only objects named in the strip count. Wrong taps cost {wrong} points; hints cost {hint}. Finishing quickly (under par {par}) adds a time bonus. Ties break on completion, then fewer wrong taps, then faster time.', { wrong: R.SCORE.INVALID_PENALTY, hint: R.SCORE.HINT_COST, par: this.level ? UI.fmtTime(this.level.parSeconds * 1000) : '—' })}</p>
+      <div class="hn-btn-row"><button class="hn-btn hn-btn-primary" data-act="done">${h('Done')}</button></div>
     `, { label: 'Help' });
     panel.addEventListener('click', (ev) => {
       if (ev.target.closest('[data-act="done"]')) {
@@ -2384,7 +2445,7 @@ const Game = {
     const next = idxs[(cur + dir + idxs.length) % idxs.length];
     this.renderer.focusItem(next);
     Audio.play('focus');
-    UI.announce('Focused: ' + this.state.items[next].name);
+    UI.announce(T('Focused: {name}', { name: objName(this.state.items[next].name) }));
   },
 
   pollGamepad() {
@@ -2419,7 +2480,8 @@ const Game = {
       if (pl && !pl.querySelector('.hn-auto-pause-note')) {
         const note = document.createElement('p');
         note.className = 'rail-sub hn-auto-pause-note';
-        note.textContent = 'Paused automatically while the tab was hidden. The clock stopped — nothing happened while you were away.';
+        note.setAttribute('data-i18n', K('Paused automatically while the tab was hidden. The clock stopped — nothing happened while you were away.'));
+        note.textContent = T(note.getAttribute('data-i18n'));
         pl.prepend(note);
       }
     }
@@ -2451,11 +2513,11 @@ const Game = {
 
 // achievement metadata (mirrors server set)
 const ACTION_ACHIEVEMENTS = {
-  'first-completion': { name: 'First Light', desc: 'Complete your first round.' },
-  'mechanic-mastery': { name: 'Steady Eye', desc: 'Complete a round with zero invalid taps and no hints.' },
-  'daily-streak-3': { name: 'Regular Visitor', desc: 'Finish the daily challenge three days in a row.' },
-  'journey-20': { name: 'Deep Nook', desc: 'Clear journey stage 20.' },
-  'collector-1000': { name: 'Nook Collector', desc: 'Find 1000 objects across all rounds.' },
+  'first-completion': { name: K('First Light'), desc: K('Complete your first round.') },
+  'mechanic-mastery': { name: K('Steady Eye'), desc: K('Complete a round with zero invalid taps and no hints.') },
+  'daily-streak-3': { name: K('Regular Visitor'), desc: K('Finish the daily challenge three days in a row.') },
+  'journey-20': { name: K('Deep Nook'), desc: K('Clear journey stage 20.') },
+  'collector-1000': { name: K('Nook Collector'), desc: K('Find 1000 objects across all rounds.') },
 };
 
 // ---- bootstrap -------------------------------------------------------------------

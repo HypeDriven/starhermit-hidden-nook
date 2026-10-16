@@ -19,7 +19,7 @@ export function makeBackend() {
     const path = url.replace(/^https?:\/\/[^/]+/, '');
     if (path.includes('/cloud-saves/')) {
       const key = decodeURIComponent(path.split('/cloud-saves/')[1].split('?')[0]);
-      if (method === 'PUT') { saves[key] = Buffer.from(body.dataBase64, 'base64'); return r(200, '{}'); }
+      if (method === 'PUT') { saves[key] = Buffer.from(body.dataBase64, 'base64'); return r(200, JSON.stringify({ etag: '"v' + Object.keys(saves).length + Date.now() + '"' })); }
       return saves[key] ? r(200, saves[key]) : r(404, '');
     }
     if (path.endsWith('/profile')) return r(200, JSON.stringify({ username: 'pk-1', nickname: 'Al' }));

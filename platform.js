@@ -11,6 +11,11 @@
   'use strict';
   const SH = root.StarHermit || null;
 
+  function playerFallback(id) {
+    const short = String(id).slice(0, 6);
+    return root.HNI18N ? root.HNI18N.T('Player {id}', { id: short }) : 'Player ' + short;
+  }
+
   const Platform = {
     sh: SH,
     sub: null,         // user id from the token
@@ -70,13 +75,13 @@
     async loadProfile() {
       if (!this.hosted) return;
       const p = await SH.profile();
-      this.nickname = p ? p.displayName : 'Player ' + String(this.sub).slice(0, 6);
+      this.nickname = p ? p.displayName : playerFallback(this.sub);
       SH.avatarUrl().then((url) => { this.avatar = url; });
     },
 
     async nicknameFor(userId) {
       const p = this.hosted ? await SH.profile(userId) : null;
-      return p ? p.displayName : 'Player ' + String(userId).slice(0, 6);
+      return p ? p.displayName : playerFallback(userId);
     },
 
     async syncTime() {
@@ -100,6 +105,8 @@
     saveCloud(doc, delayMs) { if (this.hosted) SH.saveJSON(doc, delayMs); },
     flushCloud(keepalive) { return this.hosted ? SH.flushSave(keepalive === true) : Promise.resolve(false); },
     onSaved(fn) { if (SH) SH.on('saved', fn); },
+    /** A conditional cloud write lost to another device's save: reload the cloud doc and hand it to fn to merge. */
+    onConflict(fn) { if (SH) SH.on('saveconflict', () => { SH.loadJSON().then((doc) => fn(doc)); }); },
     getSettings() { return this.hosted ? SH.getSettings() : Promise.resolve({}); },
     patchSettings(obj) { if (this.hosted) SH.patchSettings(obj); },
     loadBindings(defaults) {

@@ -223,7 +223,7 @@ body.hn-reduced-motion .hn-progressbar-fill { transition: none; }
     display: flex; gap: 0.6rem; justify-content: space-around;
     padding-bottom: var(--hn-safe-bottom);
   }
-  .hn-tray .hn-btn { flex: 1; min-height: 48px; }
+  .hn-tray .hn-btn { flex: 1; min-height: 48px; min-width: 0; padding-inline: 0.3rem; overflow-wrap: anywhere; hyphens: auto; }
   #action-row { display: none; }
   /* the round fits the screen without page scroll: the shell is exactly one
      viewport tall and the playfield takes whatever the rails and tray leave */
