@@ -174,6 +174,7 @@ async function runPass(browser, vpName, contextOpts) {
       await presetIs('high');
       await page.waitForFunction(() => /2048² shadows/.test(document.getElementById('gfx-summary').textContent)
         && / bloom/.test(document.getElementById('gfx-summary').textContent));
+      if (!/ · Level 0 · /.test(await page.textContent('#gfx-summary'))) throw new Error('summary lacks the hardware level: ' + await page.textContent('#gfx-summary'));
       if (!/From preset \(On\)/.test(await page.locator('#set-gfx-bloom option[value="preset"]').textContent())) {
         throw new Error('bloom select does not show the preset tier');
       }

@@ -35,7 +35,8 @@ candle burns down.
 | `starhermit-sdk.js` | Shared StarHermit client (`window.StarHermit`), an unmodified copy of `tools/starhermit-sdk.js`. |
 | `platform.js` | `window.HNPlatform`: StarHermit adapter over the SDK plus the server clock (`GET /api/v1/time`, signed in only). |
 | `game.js` | Client: `Settings`, `Progress`, `Audio`, `NookRenderer` (scene, graphics settings, post chain), `UI`, `Game` state machine (incl. the Settings → Graphics section). |
-| `gfx.js` | Pure graphics quality model: presets, categories, GPU detection (`detectPreset`), `resolve`, `presetTier`, `choosePreset`, `describe`. No three.js import. |
+| `gfx.js` | Pure graphics quality model: presets, categories, hardware-level detection (`detectLevel`, `presetForLevel`, `detectPreset`), per-preset `BUDGETS`/`budgetFor`, `resolve`, `presetTier`, `choosePreset`, `describe`. No three.js import. |
+| `gpu-level.js` | Shared StarHermit hardware-level module (`window.StarHermitGpu`, classic script loaded before `game.js`), copied from the platform tools, never edited here. |
 | `gfx-i18n.js` | Settings → Graphics strings in the nine target locales and `pickLocale`. |
 | `vendor/three/addons/` | three.js 0.185.1 addons: `EffectComposer`, `RenderPass`, `ShaderPass`, `OutputPass`, `GTAOPass`, `UnrealBloomPass`, `SMAAPass`, their shaders, `FXAAShader`, `RoomEnvironment`. Loaded with dynamic `import()` only when a preset needs them. |
 | `score-script.js` | StarHermit platform script (`server=`): range-checks a finished round's total and posts it to the `high-score` leaderboard (canonical copy in the games repo's `tools/score-script.js`). |
@@ -359,31 +360,29 @@ band from 22 to 46 units that lets the room's edges fall into the case.
 **Graphics.** On top of that base, the room gains, per setting: image-based lighting from a
 `RoomEnvironment` PMREM as `scene.environment` (intensity 0.45; the hemisphere fill drops to 70%
 while it is on) so glazed and metal pieces pick up soft reflections; clearcoat
-`MeshPhysicalMaterial` on glazed kinds (mug, teapot, bottle, shell, button, jar, book), metal kinds
+`MeshPhysicalMaterial` (High/Ultra budget) on glazed kinds (mug, teapot, bottle, shell, button, jar, book), metal kinds
 (key, clock, bell, thimble, coin, lantern frame), the clock and the lacquered table; procedural
 canvas textures — wood grain with knots on the floor (with plank seams), shelves, table and crates,
 and a woven ring pattern on the rug; wall trim (skirting, picture rail, crown), a framed landscape
-print above the shelves, a glowing window on the left wall, a clock face with hour ticks, and a
+print above the shelves, a glowing window on the left wall, a clock face with hour ticks, and (High/Ultra budget) a
 candle glow light that flickers with the flame. All added decoration is wall-mounted above or
 beside every item anchor, is never pickable and never occludes a find. Dust motes are soft additive
-sprites (100 or 700). Post-processing (three's `EffectComposer`): RenderPass → GTAO contact
+sprites (count from the preset's budget, below). Post-processing (three's `EffectComposer`): RenderPass → GTAO contact
 shadows → UnrealBloom limited to HDR values above 2.2 (flames, the lantern, the window, hot glints)
 → OutputPass (tone mapping + sRGB) → a colour grade (gentle S-curve, +10% saturation, warm
 highlights / cool shadows, soft vignette) → SMAA or FXAA; MSAA uses a 4-sample half-float target.
 Selection rings are hidden while fully faded so they never reach the AO depth/normal pass. The
 Settings panel's **Graphics** section offers: **Quality** — Auto (detected: <tier>), chosen from the
-unmasked WebGL renderer string, where software renderers (SwiftShader, llvmpipe) get Low, discrete
-GPUs and Apple M-series get High, anything else Balanced, and touch devices cap at Balanced; Low;
-Balanced; High; Ultra; a **Render scale** slider (50–200%); one select per category — Shadows
+StarHermit hardware level (below); Low; Balanced; High; Ultra; a **Render scale** slider (50–200%); one select per category — Shadows
 (off/low/medium/high), Ambient occlusion (off/on/high), Glow (bloom) (off/on), Color grade (off/on),
 Anti-aliasing (off/FXAA/SMAA/MSAA), Reflections (off/on), Dust motes (low/high) and Room detail
 (plain/detailed) — each defaulting to "From preset (<tier>)"; **Adaptive resolution** (on by
 default: every 90 frames, an average above 26 ms steps the scale down by 0.1 to a floor of 0.6,
 below 14 ms back up by 0.05 to 1); **Show frame rate** (a bottom-left readout that never takes
-pointer input); and a summary line "GPU · cost summary · W×H px". Choosing a preset clears the
+pointer input); and a summary line "GPU · Level N · cost summary · W×H px" ("Level" localized). Choosing a preset clears the
 category overrides (render scale, adaptive and frame-rate choices stay). Every change applies
 immediately without a reload — shadow maps resize, the post chain is rebuilt, the pixel ratio
-changes, and a Dust motes or Room detail change rebuilds the room while keeping found/hinted
+changes, and a Dust motes, Room detail or asset-budget change rebuilds the room while keeping found/hinted
 objects and the camera — and is saved in `hn-settings-v1` under `graphics`. The pixel ratio is
 `min(devicePixelRatio, cap) × preset scale × render scale × adaptive scale` with caps Low 1,
 Balanced 1.5, High/Ultra 2 (Ultra's preset scale is 1.25). If the addons fail to load or the post
@@ -396,8 +395,39 @@ chain throws, the room renders directly and the panel says post-processing is un
 | High | medium | on | on | on | SMAA | on | high | detailed |
 | Ultra | high | high | on | on | MSAA | on | high | detailed |
 
-Low draws exactly the pre-preset scene (no post chain, no addons downloaded, 100 motes, pixel
-ratio ≤ 1).
+Low draws the pre-preset scene with Lambert shading (no post chain, no addons downloaded, 100 motes,
+pixel ratio ≤ 1).
+
+**Hardware-level detection.** `gpu-level.js` (shared StarHermit copy, `window.StarHermitGpu`) rates the
+WebGL unmasked renderer plus device facts (`detectSystem()`) on the StarHermit hardware level 0–20 (0 =
+Galaxy S20 / Intel UHD or weaker and every software renderer, 20 = RTX 5090, each level ≈ 1.23×; laptop
+parts two levels below desktop; phones, tablets and ≤ 4 GB machines capped at 9). `gfx.js` maps it with
+`presetForLevel(level, { low: 0, balanced: 4, high: 10, ultra: 17 })`, so Auto picks Ultra on strong
+GPUs; adaptive resolution still steps down when slow. Headless SwiftShader is level 0 → Low. Phones and
+tablets pace Auto FPS at half the display refresh rate ("Auto (half refresh rate)") and start at 16
+simultaneous sounds (shared `game-options.js`).
+
+**Per-preset budgets** (`BUDGETS` / `budgetFor` in `gfx.js`; each preset holds 60 FPS on the weakest GPU
+Auto gives it — Low at level 0, Balanced 4, High 10, Ultra 17). The mote count is tuned at the floor
+level and scales up within the preset on faster GPUs (`StarHermitGpu.scaleBudget`, ≤ 4×). Items keep
+their authored geometry on every preset, so every find and hit area is identical.
+
+| Budget | Low | Balanced | High | Ultra |
+|---|---|---|---|---|
+| Lit materials | Lambert | Standard | Standard + clearcoat Physical on glazed/metal pieces and the table (Room detail on) | same as High |
+| Wood/rug canvas textures (Room detail on) | 64² | 128² | 256² | 512² |
+| Prop segments (rug, candle, clock) | ×0.5 | ×0.75 | ×1 | ×1.5 |
+| Candle glow point light (Room detail on) | no | no | yes | yes |
+| Dust motes at the floor level (Dust motes low: half, at most 100) | 200 | 350 | 700 | 1000 |
+| Bloom / GTAO resolution | ½ / ½ | ½ / ½ | ½ / ½ | full / full |
+
+**Benchmark** (`node tools/gfx-bench.mjs hidden-nook`; hook `tests/gfx-bench.mjs` picks the preset in
+Settings, starts a Practice round and keeps orbiting the camera with mouse drags on the canvas, asking
+for a hint now and then). Measured 2026-10-17 (AMD Radeon iGPU level 2 GPU time minus the same page with
+draws skipped, projected to the preset's floor level; RTX 5090 CPU time):
+
+- Desktop 1920×1080: PASS low (typical 0.00 / slow 2.17 ms at level 0, CPU p90 1.50 ms); PASS balanced (0.88 / 0.06 ms at level 4, CPU 1.70 ms); PASS high (0.97 / 2.92 ms at level 10, CPU 2.90 ms); PASS ultra (1.40 / 1.59 ms at level 17, CPU 2.40 ms).
+- Mobile 390×844 @3×: PASS low (0.85 / 0.00 ms at level 0, CPU 1.20 ms); PASS balanced (1.77 / 2.06 ms at level 4, CPU 1.50 ms).
 
 **Typography.** System UI stack (`system-ui, -apple-system, "Segoe UI", Roboto`), 16 px base scaled
 by `--hn-font-scale` (1.2 under Larger text). Numeric HUD values use tabular figures.
@@ -616,7 +646,7 @@ dotfile path are refused by the static handler.
 DOM: the title's Practice button, the difficulty `<select>`, the seed `<input>` (fixed to 424242),
 Begin, Escape to pause, the Settings quality select, the hint and reset-view buttons. Before
 the round it opens Settings from the title and exercises Graphics: Low then High (asserted through
-`body[data-gfx-preset]`, the canvas's `data-gfx-preset` and the cost summary), a Glow (bloom)
+`body[data-gfx-preset]`, the canvas's `data-gfx-preset` and the cost summary, which shows "Level 0"), a Glow (bloom)
 override, a reload that must keep both, and a switch back to Auto that clears the override. To find an
 object it projects the item's world position through the live camera and issues a real
 `page.mouse.click` on the canvas; if the ray misses it falls back to arrow-key focus plus Enter —
@@ -641,8 +671,10 @@ determinism; v1 → v2 migration; a pinned golden hash for an easy session; and 
 pass (static serving, time, daily, validated submit, rejection of an impossible score, leaderboard,
 cloud-save round-trip, achievement idempotency, submission guards).
 
-**`tests/gfx.test.mjs`** (also run by `npm test`) checks `detectPreset` on sample GPU strings
-and the mobile cap, `resolve` with presets, overrides, invalid values and the render-scale clamp,
+**`tests/gfx.test.mjs`** (also run by `npm test`) checks hardware level → preset (SwiftShader/llvmpipe,
+AMD Radeon Graphics and Intel UHD → Low, Iris Xe → Balanced, GTX 1070 → High, RTX 4080/5090 → Ultra;
+phones such as Adreno 740 capped at Balanced), the per-preset budget table (explicit, non-decreasing,
+floor-level tuned, scaling with the level, Dust motes low cap), `resolve` with presets, overrides, invalid values and the render-scale clamp,
 that choosing a preset clears overrides, the legacy-quality migration, `describe`, and that all
 nine locales carry every Graphics string.
 

@@ -8,7 +8,7 @@ const en = {
   renderScale: 'Render scale', fromPreset: 'From preset ({tier})',
   adaptive: 'Adaptive resolution', showFps: 'Show frame rate',
   postUnavailable: 'Post-processing is unavailable on this device, so the room is drawn without it.',
-  unknownGpu: 'unknown GPU',
+  unknownGpu: 'unknown GPU', level: 'Level {n}',
   cat: {
     shadows: 'Shadows', ao: 'Ambient occlusion', bloom: 'Glow (bloom)', grade: 'Color grade',
     antialias: 'Anti-aliasing', reflections: 'Reflections', particles: 'Dust motes', detail: 'Room detail',
@@ -34,7 +34,7 @@ const es = {
   renderScale: 'Escala de renderizado', fromPreset: 'Según preajuste ({tier})',
   adaptive: 'Resolución adaptativa', showFps: 'Mostrar fotogramas por segundo',
   postUnavailable: 'El posprocesado no está disponible en este dispositivo; la habitación se dibuja sin él.',
-  unknownGpu: 'GPU desconocida',
+  unknownGpu: 'GPU desconocida', level: 'Nivel {n}',
   cat: {
     shadows: 'Sombras', ao: 'Oclusión ambiental', bloom: 'Resplandor (bloom)', grade: 'Corrección de color',
     antialias: 'Antialiasing', reflections: 'Reflejos', particles: 'Motas de polvo', detail: 'Detalle de la habitación',
@@ -61,7 +61,7 @@ const de = {
   renderScale: 'Renderskalierung', fromPreset: 'Laut Voreinstellung ({tier})',
   adaptive: 'Adaptive Auflösung', showFps: 'Bildrate anzeigen',
   postUnavailable: 'Nachbearbeitung ist auf diesem Gerät nicht verfügbar, der Raum wird ohne sie gezeichnet.',
-  unknownGpu: 'unbekannte GPU',
+  unknownGpu: 'unbekannte GPU', level: 'Stufe {n}',
   cat: {
     shadows: 'Schatten', ao: 'Umgebungsverdeckung', bloom: 'Leuchten (Bloom)', grade: 'Farbkorrektur',
     antialias: 'Kantenglättung', reflections: 'Spiegelungen', particles: 'Staubpartikel', detail: 'Raumdetails',
@@ -82,7 +82,7 @@ const fr = {
   renderScale: 'Échelle de rendu', fromPreset: 'Selon le préréglage ({tier})',
   adaptive: 'Résolution adaptative', showFps: 'Afficher les images par seconde',
   postUnavailable: 'Le post-traitement n’est pas disponible sur cet appareil ; la pièce est dessinée sans.',
-  unknownGpu: 'GPU inconnu',
+  unknownGpu: 'GPU inconnu', level: 'Niveau {n}',
   cat: {
     shadows: 'Ombres', ao: 'Occlusion ambiante', bloom: 'Halo lumineux (bloom)', grade: 'Étalonnage des couleurs',
     antialias: 'Anticrénelage', reflections: 'Reflets', particles: 'Grains de poussière', detail: 'Détails de la pièce',
@@ -109,7 +109,7 @@ const pt = {
   renderScale: 'Escala de renderização', fromPreset: 'Conforme predefinição ({tier})',
   adaptive: 'Resolução adaptável', showFps: 'Mostrar taxa de quadros',
   postUnavailable: 'O pós-processamento não está disponível neste dispositivo; o cômodo é desenhado sem ele.',
-  unknownGpu: 'GPU desconhecida',
+  unknownGpu: 'GPU desconhecida', level: 'Nível {n}',
   cat: {
     shadows: 'Sombras', ao: 'Oclusão ambiente', bloom: 'Brilho (bloom)', grade: 'Correção de cor',
     antialias: 'Antisserrilhamento', reflections: 'Reflexos', particles: 'Partículas de poeira', detail: 'Detalhes do cômodo',
@@ -130,7 +130,7 @@ const it = {
   renderScale: 'Scala di rendering', fromPreset: 'Da preimpostazione ({tier})',
   adaptive: 'Risoluzione adattiva', showFps: 'Mostra frame al secondo',
   postUnavailable: 'La post-elaborazione non è disponibile su questo dispositivo; la stanza viene disegnata senza.',
-  unknownGpu: 'GPU sconosciuta',
+  unknownGpu: 'GPU sconosciuta', level: 'Livello {n}',
   cat: {
     shadows: 'Ombre', ao: 'Occlusione ambientale', bloom: 'Bagliore (bloom)', grade: 'Correzione colore',
     antialias: 'Antialiasing', reflections: 'Riflessi', particles: 'Granelli di polvere', detail: 'Dettagli della stanza',

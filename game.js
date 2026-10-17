@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import * as THREE from './vendor/three.module.js';
-import { detectPreset, resolve, describe, presetTier, choosePreset, migrateQuality, PRESETS, CATEGORIES, SHADOW_MAP, PARTICLE_COUNT } from './gfx.js';
+import { detectLevel, presetForLevel, resolve, describe, presetTier, choosePreset, migrateQuality, PRESETS, CATEGORIES, SHADOW_MAP } from './gfx.js';
 import { gfxStrings, pickLocale } from './gfx-i18n.js';
 
 const R = window.HNRules;
@@ -488,10 +488,12 @@ function isMobileDevice() {
 
 // Procedural canvas textures for the "detailed" room (tileable, near-white so the authored
 // material colour still decides the hue).
-function woodTexture(seed, planks) {
+// Authored at 256 px; `size` (the preset's texture budget) scales the drawing.
+function woodTexture(seed, planks, size) {
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = size || 256;
   const g = c.getContext('2d');
+  g.scale(c.width / 256, c.width / 256);
   const rng = R.mulberry32(seed);
   g.fillStyle = '#e6e6e6';
   g.fillRect(0, 0, 256, 256);
@@ -520,10 +522,11 @@ function woodTexture(seed, planks) {
   return c;
 }
 
-function rugTexture() {
+function rugTexture(size) {
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = size || 256;
   const g = c.getContext('2d');
+  g.scale(c.width / 256, c.width / 256);
   g.fillStyle = '#ffffff';
   g.fillRect(0, 0, 256, 256);
   const ring = (r, w, col) => { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(128, 128, r, 0, Math.PI * 2); g.stroke(); };
@@ -541,7 +544,7 @@ function rugTexture() {
     g.restore();
   }
   ring(26, 8, '#e8c98a');
-  const img = g.getImageData(0, 0, 256, 256); // fibre noise
+  const img = g.getImageData(0, 0, c.width, c.height); // fibre noise
   const rng = R.mulberry32(0x5eed);
   for (let i = 0; i < img.data.length; i += 4) {
     const n = (rng() - 0.5) * 34;
@@ -564,6 +567,15 @@ function moteTexture() {
   return c;
 }
 
+// Run a post pass at a fraction of the frame: EffectComposer.addPass/setSize hand every pass the full
+// frame size, so the pass's own setSize applies the budget's scale (half-res bloom/GTAO below Ultra).
+function atScale(pass, k) {
+  if (!(k < 1)) return pass;
+  const setSize = pass.setSize.bind(pass);
+  pass.setSize = (w, h) => setSize(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+  return pass;
+}
+
 class NookRenderer {
   constructor(holder) {
     this.holder = holder;
@@ -581,7 +593,14 @@ class NookRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.gpu = NookRenderer.gpuName(this.renderer);
-    this.detected = detectPreset(this.gpu, isMobileDevice());
+    // StarHermit hardware level (gpu-level.js): renderer string + device facts (cores, memory, screen).
+    let sys = { mobile: isMobileDevice(), webgl2: this.renderer.capabilities.isWebGL2 !== false };
+    try {
+      const G = globalThis.StarHermitGpu;
+      if (G) { const d = G.detectSystem(); sys = { ...sys, mobile: sys.mobile || d.mobile, touch: d.touch, screen: d.screen, cores: d.cores, memoryGb: d.memoryGb, astc: d.astc }; }
+    } catch { /* defaults */ }
+    this.gpuLevel = detectLevel(this.gpu, sys);
+    this.detected = presetForLevel(this.gpuLevel);
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
@@ -633,7 +652,7 @@ class NookRenderer {
     if (json === this._gfxJson) return;
     this._gfxJson = json;
     const prev = this.q;
-    const g = resolve(saved || {}, this.detected);
+    const g = resolve(saved || {}, this.detected, this.gpuLevel);
     this.q = g;
     document.body.dataset.gfxPreset = g.preset;
     this.canvas.dataset.gfxPreset = g.preset;
@@ -643,7 +662,8 @@ class NookRenderer {
     this.postKey = null; // rebuild the post chain on the next frame
     this._fpsVisible(g.showFps);
     if (g.post || g.reflections === 'on') this._ensureAddons();
-    const rebuild = prev && this.level && (prev.particles !== g.particles || prev.detail !== g.detail);
+    const assets = (q) => [q.particles, q.detail, q.budget.material, q.budget.texture, q.budget.segments, q.budget.candleLight, q.budget.motes].join('|');
+    const rebuild = prev && this.level && assets(prev) !== assets(g);
     if (rebuild) this.rebuild();
     else {
       this._applyShadows();
@@ -657,6 +677,7 @@ class NookRenderer {
     const px = [Math.round((this._w || 1) * (this.pixelRatio || 1)), Math.round((this._h || 1) * (this.pixelRatio || 1))];
     return {
       gpu: this.gpu,
+      level: this.gpuLevel,
       detected: this.detected,
       resolved: this.q,
       summary: describe(this.q, px, words),
@@ -754,7 +775,7 @@ class NookRenderer {
       composer.setSize(w, h);
       composer.addPass(new A.RenderPass(this.scene, this.camera));
       if (g.ao !== 'off') {
-        const ao = new A.GTAOPass(this.scene, this.camera, Math.round(w * pr), Math.round(h * pr));
+        const ao = atScale(new A.GTAOPass(this.scene, this.camera, Math.round(w * pr), Math.round(h * pr)), g.budget.aoRes);
         ao.output = A.GTAOPass.OUTPUT.Default;
         ao.blendIntensity = 0.85;
         ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1.0, scale: 1.0, samples: g.ao === 'high' ? 16 : 8 });
@@ -764,7 +785,7 @@ class NookRenderer {
       if (g.bloom === 'on') {
         // The threshold is on pre-tone-mapping HDR values (exposure 1.35): lit surfaces stay
         // below it, only the flames, the lantern, the window and hot specular glints bloom.
-        composer.addPass(new A.UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 2.2));
+        composer.addPass(atScale(new A.UnrealBloomPass(new THREE.Vector2(w, h), 0.6, 0.45, 2.2), g.budget.bloomRes));
       }
       composer.addPass(new A.OutputPass());
       if (g.grade === 'on') composer.addPass(new A.ShaderPass(GradeShader));
@@ -856,12 +877,18 @@ class NookRenderer {
 
   track(...objs) { for (const o of objs) this.disposables.push(o); return objs[0]; }
 
+  // Lit material for the budget: Lambert on Low (no PBR), Standard otherwise.
   mat(color, rough, metal, extra) {
+    if (this.q.budget.material === 'lambert') {
+      const m = new THREE.MeshLambertMaterial({ color });
+      if (extra) for (const k of ['map', 'emissive', 'emissiveIntensity', 'transparent', 'opacity']) if (extra[k] != null) m[k] = k === 'emissive' ? new THREE.Color(extra[k]) : extra[k];
+      return this.track(m);
+    }
     return this.track(new THREE.MeshStandardMaterial(Object.assign({ color, roughness: rough != null ? rough : 0.7, metalness: metal || 0.05 }, extra)));
   }
-  // Glossy pieces (glazed ceramic, polished metal, lacquer) get a clearcoat at "detailed".
+  // Glossy pieces (glazed ceramic, polished metal, lacquer) get a clearcoat at "detailed" on High+.
   gloss(color, rough, metal, coat) {
-    if (this.q.detail !== 'detailed') return this.mat(color, rough, metal);
+    if (this.q.detail !== 'detailed' || this.q.budget.material !== 'physical') return this.mat(color, rough, metal);
     return this.track(new THREE.MeshPhysicalMaterial({
       color, roughness: rough, metalness: metal || 0.05, clearcoat: coat != null ? coat : 0.7, clearcoatRoughness: 0.18,
     }));
@@ -876,6 +903,8 @@ class NookRenderer {
     if (color) tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
   }
+  /** Round-geometry segment count for the budget (authored count × LOD multiplier, at least `min`). */
+  seg(n, min = 6) { return Math.max(min, Math.round(n * this.q.budget.segments)); }
 
   // Fit the key light's orthographic shadow box tightly around the room's bounds.
   fitShadow(light, min, max) {
@@ -924,8 +953,9 @@ class NookRenderer {
     this.scene.add(lamp);
 
     const rng = R.mulberry32(decoSeed);
-    const woodA = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0x51, 0), 2, 1, true) : null;
-    const floorTex = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0xf1, 4), 3, 2, true) : null;
+    const texSize = this.q.budget.texture;
+    const woodA = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0x51, 0, texSize), 2, 1, true) : null;
+    const floorTex = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0xf1, 4, texSize), 3, 2, true) : null;
 
     // floor + two walls (miniature room, open dollhouse front)
     const floor = new THREE.Mesh(this.geo(new THREE.BoxGeometry(13, 0.3, 9)), this.mat(t.floor, detailed ? 0.72 : 0.9, 0.05, floorTex ? { map: floorTex } : null));
@@ -960,7 +990,7 @@ class NookRenderer {
     }
     // side table + crates + rug
     const table = new THREE.Mesh(this.geo(new THREE.BoxGeometry(6.4, 0.18, 1.8)),
-      detailed ? this.track(new THREE.MeshPhysicalMaterial({ color: 0x74543a, roughness: 0.55, metalness: 0.02, clearcoat: 0.35, clearcoatRoughness: 0.35, map: woodA }))
+      detailed && this.q.budget.material === 'physical' ? this.track(new THREE.MeshPhysicalMaterial({ color: 0x74543a, roughness: 0.55, metalness: 0.02, clearcoat: 0.35, clearcoatRoughness: 0.35, map: woodA }))
         : this.mat(0x74543a, 0.75));
     table.position.set(0, 0.82, 0.6); table.castShadow = table.receiveShadow = true;
     this.scene.add(table);
@@ -970,7 +1000,7 @@ class NookRenderer {
       leg.castShadow = detailed;
       this.scene.add(leg);
     }
-    const crateTex = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0xc7, 3), 1, 1, true) : null;
+    const crateTex = detailed ? this.canvasTex(woodTexture(decoSeed ^ 0xc7, 3, texSize), 1, 1, true) : null;
     const crateMat = this.mat(0x7a5c3a, 0.85, 0.05, crateTex ? { map: crateTex } : null);
     for (let i = 0; i < 3; i++) {
       const crate = new THREE.Mesh(this.geo(new THREE.BoxGeometry(1.1, 0.9, 1.1)), crateMat);
@@ -979,8 +1009,8 @@ class NookRenderer {
       crate.castShadow = crate.receiveShadow = true;
       this.scene.add(crate);
     }
-    const rugTex = detailed ? this.canvasTex(rugTexture(), 1, 1, true) : null;
-    const rug = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(2.6, 2.6, 0.04, detailed ? 64 : 40)),
+    const rugTex = detailed ? this.canvasTex(rugTexture(texSize), 1, 1, true) : null;
+    const rug = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(2.6, 2.6, 0.04, this.seg(detailed ? 64 : 40, 24))),
       this.mat(0x7a3a44, 0.98, 0, rugTex ? { map: rugTex } : null));
     rug.position.set(0, 0.02, 1.8);
     rug.receiveShadow = true;
@@ -989,26 +1019,26 @@ class NookRenderer {
     if (detailed) this.buildTrim(t);
 
     // animated details: candle flame, wall-clock pendulum, dust motes
-    const candle = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 12)), this.mat(0xf0e6c8, 0.6));
+    const candle = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.09, 0.11, 0.5, this.seg(12))), this.mat(0xf0e6c8, 0.6));
     candle.position.set(5.4, 4.0, -3.6);
     this.scene.add(candle);
     // flame colour above 1.0 so the bloom pass picks it up (tone mapping keeps it warm)
-    this.flame = new THREE.Mesh(this.geo(new THREE.ConeGeometry(0.06, 0.2, 10)),
+    this.flame = new THREE.Mesh(this.geo(new THREE.ConeGeometry(0.06, 0.2, this.seg(10))),
       this.track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffc65c).multiplyScalar(detailed ? 6 : 1) })));
     this.flame.position.set(5.4, 4.36, -3.6);
     this.scene.add(this.flame);
-    if (detailed) {
-      // candle glow that flickers with the flame
+    if (detailed && this.q.budget.candleLight) {
+      // candle glow that flickers with the flame (an extra light in every lit shader: High/Ultra only)
       this.candleLight = new THREE.PointLight(0xffb45a, 4, 5, 2);
       this.candleLight.position.set(5.4, 4.5, -3.3);
       this.scene.add(this.candleLight);
     }
-    const clockBody = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.5, 0.5, 0.12, 24)), this.gloss(0x8a6a3a, 0.45, 0.3, 0.5));
+    const clockBody = new THREE.Mesh(this.geo(new THREE.CylinderGeometry(0.5, 0.5, 0.12, this.seg(24, 12))), this.gloss(0x8a6a3a, 0.45, 0.3, 0.5));
     clockBody.rotation.x = Math.PI / 2;
     clockBody.position.set(-5.2, 4.6, -4.1);
     this.scene.add(clockBody);
     if (detailed) {
-      const face = new THREE.Mesh(this.geo(new THREE.CircleGeometry(0.4, 32)), this.mat(0xf2ead6, 0.5));
+      const face = new THREE.Mesh(this.geo(new THREE.CircleGeometry(0.4, this.seg(32, 16))), this.mat(0xf2ead6, 0.5));
       face.position.set(-5.2, 4.6, -4.03);
       this.scene.add(face);
       const tickMat = this.mat(0x2b2118, 0.6);
@@ -1026,7 +1056,7 @@ class NookRenderer {
     this.scene.add(this.pendulum);
 
     // dust particles (cosmetic layer — never raycastable): soft additive motes
-    const n = PARTICLE_COUNT[this.q.particles];
+    const n = this.q.budget.motes;
     const pos = new Float32Array(n * 3);
     const prng = R.mulberry32(decoSeed ^ 0xd157);
     for (let i = 0; i < n; i++) {
@@ -2334,7 +2364,7 @@ const Game = {
       const sum = document.getElementById('gfx-summary');
       if (!sum) { clearInterval(this._gfxTimer); this._gfxTimer = null; return; }
       const info = this.renderer.graphicsInfo(L.words);
-      const text = `${info.gpu || L.unknownGpu} · ${info.summary}`;
+      const text = [info.gpu || L.unknownGpu, info.level != null ? L.level.replace('{n}', info.level) : null, info.summary].filter(Boolean).join(' · ');
       if (sum.textContent !== text) sum.textContent = text;
       document.getElementById('gfx-post-note').hidden = !info.postFailed;
     };
