@@ -1,15 +1,44 @@
 name=Hidden Nook
 description=Search detailed miniature rooms for hidden objects before the candle timer burns down.
-launch=index.html
 owner=2712e04e-461b-4d23-81ae-e40b429128a8
 server=score-script.js
 version=1.0.0
 contentVersion=2
 cover=cover.jpg
+
+# StarHermit engine script game: one package, played natively by the
+# StarHermit client and in browsers by the engine's web runtime. Browsers open
+# launch=index.html, the loader `npm run package` writes (it pins the engine
+# on wiki.starhermit.com by hash; never edit it). Re-run `npm run package`
+# after every change and commit index.html + starhermit-files.json.
+launch=index.html
+engine.api=1
+engine.entry=native/main.ts
+engine.version=1.17.1
+engine.minor=19
+engine.capabilities=platform,storage,clipboard
+
+# Keyboard controls (players rebind keys and pads in the runtime's Options).
+# The room is also looked around by dragging (mouse or one finger), zoomed
+# with the wheel or a pinch, and objects are picked by a click or tap or from
+# the scene-object list.
 control.pause=Escape | Pause
 control.prev=ArrowLeft+ArrowUp | Previous object
 control.next=ArrowRight+ArrowDown | Next object
 control.select=Enter+Space | Select focused object
 control.hint=KeyH | Hint
 control.undo=KeyU | Undo (practice)
-control.resetView=KeyR | Reset view
+control.reset_view=KeyR | Reset view
+engine.group.prev=Objects
+engine.group.hint=Round
+
+# Gamepad defaults (the browser build's): the left stick, the D-pad or the
+# shoulders cycle the focused object, A selects it, B or Start pauses,
+# Y asks for a hint, X undoes, the right stick press resets the view.
+engine.gamepad.pause=Start+East
+engine.gamepad.prev=LeftStickLeft+DpadLeft+DpadUp+LeftShoulder
+engine.gamepad.next=LeftStickRight+DpadRight+DpadDown+RightShoulder
+engine.gamepad.select=South
+engine.gamepad.hint=North
+engine.gamepad.undo=West
+engine.gamepad.reset_view=RightStickPress

@@ -7,8 +7,8 @@
 // ---------------------------------------------------------------------------
 
 const assert = require('assert');
-const R = require('./rules.js');
-const C = require('./content.js');
+const R = require('./js/rules.js');
+const C = require('./js/content.js');
 
 let passed = 0;
 function ok(name, fn) {

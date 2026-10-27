@@ -1,0 +1,87 @@
+# The dialogs around the rounds: Settings (Haptics toggled off and on) and
+# Help from the top bar, the Score chase (personal bests, guest), the
+# Challenge list and a challenge's rules card, then the Daily: its rules card,
+# Begin, the round, Escape to the pause menu, Help from the pause menu
+# returning to it, Settings likewise, and Leave round back to the title.
+until 300 Hidden Nook
+frames 60
+# the title menu scrolls at 960×540: Tab brings its Settings into view
+key Tab 1
+frames 3
+key Tab 1
+frames 3
+key Tab 1
+frames 3
+key Tab 1
+frames 3
+key Tab 1
+frames 3
+key Tab 1
+frames 3
+key Tab 1
+frames 3
+frames 10
+click =Settings #2
+until 60 Accessibility
+frames 20
+save settings
+click =Haptics
+frames 5
+click =Haptics
+frames 5
+click =Done
+frames 10
+key ShiftLeft 1
+hold ShiftLeft
+key Tab 1
+release ShiftLeft
+frames 10
+click =Help #2
+until 60 How to play
+frames 20
+save help
+click =Done
+frames 10
+click =Score chase
+until 60 Personal bests on this device
+frames 10
+expect No local scores yet
+save scores
+click =Back
+frames 10
+click =Challenge
+until 60 Speed nook
+frames 10
+save challenge
+click Speed nook — 90 seconds, 8 objects
+until 60 Time limit 1:30
+frames 10
+click =Back
+frames 10
+click =Daily challenge
+until 60 Begin
+frames 10
+save daily-setup
+click =Begin
+until 400 =Pause
+frames 30
+save daily-round
+key Escape 1
+until 60 The clock is stopped
+frames 10
+save pause
+click =Help #2
+until 60 How to play
+frames 10
+click =Done
+until 60 The clock is stopped
+frames 10
+click =Settings #2
+until 60 Accessibility
+frames 10
+click =Done
+until 60 The clock is stopped
+frames 10
+click =Leave round
+until 60 Play (starts with a quick lesson)
+frames 10

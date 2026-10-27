@@ -18,8 +18,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const HNRules = require('./rules.js');
-const HNContent = require('./content.js');
+const HNRules = require('./js/rules.js');
+const HNContent = require('./js/content.js');
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8000;
 const ROOT = __dirname;

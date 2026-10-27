@@ -1,12 +1,16 @@
 {
   "name": "hidden-nook",
   "version": "1.0.0",
-  "description": "Hidden Nook - observation puzzle browser game",
-  "main": "server.js",
+  "description": "Hidden Nook - observation puzzle on the StarHermit engine",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "test": "node test.js && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/gfx.test.mjs tests/platform.test.mjs tests/i18n.test.mjs",
-    "test:e2e": "node tests/e2e.mjs"
+    "test": "npm run test:unit && npm run test:native",
+    "test:unit": "node test.js && node --test tests/progress.test.mjs tests/i18n.test.mjs",
+    "test:native": "node tests/native.mjs",
+    "test:browser": "node tools/browser-play.mjs .",
+    "package": "node tools/package-web.mjs",
+    "css": "node tools/css.mjs",
+    "start": "node server.js"
   },
   "license": "PolyForm-Noncommercial-1.0.0",
   "devDependencies": {
