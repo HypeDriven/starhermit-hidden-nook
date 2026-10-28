@@ -17,7 +17,7 @@ candle burns down.
 | Genre | Observation / hidden-object puzzle, single player |
 | Players | 1; asynchronous competition through the StarHermit high-score board |
 | Session | 90 s (early journey stage) to ~4 min (late stage); a daily run is one round |
-| Platforms | A StarHermit engine script game (engine 1.19.1, host API 1.21): natively in the StarHermit client and in desktop and mobile browsers through the engine's web runtime, portrait and landscape |
+| Platforms | A StarHermit engine script game (engine 1.22.0, host API 1.21): natively in the StarHermit client and in desktop and mobile browsers through the engine's web runtime, portrait and landscape |
 | Rendering | `starhermit:scene` (three.js-like) drawing a fully procedural scene — no meshes are loaded for gameplay geometry; every object is built at runtime from primitives in `render.ts` `buildItemMesh` |
 | Persistence | The game's save (`starhermit:storage` `saves`): the checksummed progress document on the device and, signed in, in the player's cloud slot |
 | Build id | `version=1.0.0` in `starhermit.txt`; content schema `CONTENT_VERSION = 2`; rules schema `SCHEMA_VERSION = 2` |
@@ -26,7 +26,7 @@ candle burns down.
 
 | Path | Responsibility |
 |---|---|
-| `starhermit.txt` | Manifest: name, owner, `server=score-script.js`, version, cover, `launch=index.html`, `engine.api=1`, `engine.entry=native/main.ts`, `engine.version=1.19.1`, `engine.minor=19`, capabilities (platform, storage, clipboard), the `control.*` keys and `engine.gamepad.*` buttons. |
+| `starhermit.txt` | Manifest: name, owner, `server=score-script.js`, version, cover, `launch=index.html`, `engine.api=1`, `engine.entry=native/main.ts`, `engine.version=1.22.0`, `engine.minor=19`, capabilities (platform, storage, clipboard), the `control.*` keys and `engine.gamepad.*` buttons. |
 | `index.html`, `starhermit-files.json` | The engine's web loader and file index, written by `npm run package` (`starhermit package --web .`); never edited by hand. |
 | `native/main.ts` | Entry module: the state machine, command dispatch and events, the lesson, focus cycling, pointer / keyboard / gamepad input, progression and achievements, the fixed-step rules clock. |
 | `native/screens.ts` | Every screen, rail, tray, dialog and the toast in `starhermit:ui`; picks the layout from the window's logical size. |
@@ -497,7 +497,7 @@ table and follow the same language.
 ## 12. StarHermit integration
 
 The game is a StarHermit engine script game (`starhermit.txt`: `engine.api=1`,
-`engine.entry=native/main.ts`, `engine.version=1.19.1`, `engine.minor=19`,
+`engine.entry=native/main.ts`, `engine.version=1.22.0`, `engine.minor=19`,
 `engine.capabilities=platform,storage,clipboard`), keeping `name`, `description`, `owner`,
 `server=score-script.js`, `version`, `contentVersion=2` and `cover=cover.jpg`.
 
