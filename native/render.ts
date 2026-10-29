@@ -20,9 +20,8 @@
 // the playfield rectangle the UI leaves (setRect), so taps pick through the
 // same projection.
 //
-// Gaps from three.js: lights take three.js intensities ÷ π; the key light's
-// shadow covers `shadow.distance` along the view instead of a box fitted to
-// the room by hand; the jar's glass writes depth as three.js's transparent
+// Lights, the key light's shadow box fitted to the room and the RoomEnvironment
+// (lowered as r183+) are the browser build's. Gaps from three.js: the jar's glass writes depth as three.js's transparent
 // materials do (`depthWrite: true`); Vector3 has no lerpVectors.
 import {
   ACESFilmicToneMapping, AdditiveBlending, BoxGeometry, BufferAttribute, BufferGeometry, CanvasTexture, CircleGeometry, ClampToEdgeWrapping,
@@ -36,7 +35,6 @@ import { OffscreenCanvas } from "starhermit:canvas";
 import { Content as C, Rules as R, type Level, type Theme } from "./classic.ts";
 import type { Look } from "./quality.ts";
 
-const L = (i: number): number => i / Math.PI; // three.js light intensity → the engine's
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 
 export const camera = new PerspectiveCamera(42, 1, 0.1, 200);
@@ -177,7 +175,11 @@ function loadWallpaper(): void {
 let envTex: Texture | null = null;
 function environment(): Texture | null {
   if (!envTex) {
-    try { envTex = new PMREMGenerator(renderer).fromScene(new RoomEnvironment(renderer), 0.04).texture; }
+    try {
+      const room = new RoomEnvironment(renderer);
+      room.position.y = -3.5; // three.js r183+ lowers the room
+      envTex = new PMREMGenerator(renderer).fromScene(room, 0.04).texture;
+    }
     catch (e) { console.warn(`environment: ${e instanceof Error ? e.message : String(e)}`); }
   }
   return envTex;
@@ -226,20 +228,20 @@ function buildRoom(t: Theme, decoSeed: number): void {
   scene.fog = new Fog(t.fog, 22, 46);
 
   // lighting: one dominant warm key + soft fill + hemisphere ambience
-  hemi = new HemisphereLight(t.fill, 0x4a3a28, L(t.ambient * 1.6));
+  hemi = new HemisphereLight(t.fill, 0x4a3a28, t.ambient * 1.6);
   hemiBase = hemi.intensity;
   root.add(hemi);
-  const key = new DirectionalLight(t.key, L(2.4));
+  const key = new DirectionalLight(t.key, 2.4);
   key.position.set(6, 9, 7);
   key.target.position.set(0, 1.5, -0.5);
   key.shadow.bias = -0.0003;
-  key.shadow.normalBias = 1;
-  key.shadow.distance = 45;
+  key.shadow.normalBias = 0.02;
+  fitShadow(key, new Vector3(-6.5, -0.3, -4.5), new Vector3(6.5, 6.4, 4.5));
   root.add(key, key.target);
   keyLight = key;
   applyShadows();
   // warm interior fill so the miniature room reads even on dim themes
-  const lamp = new PointLight(0xffe0b0, L(30), 30, 1.8);
+  const lamp = new PointLight(0xffe0b0, 30, 30, 1.8);
   lamp.position.set(0, 5.2, 1.5);
   root.add(lamp);
 
@@ -295,7 +297,7 @@ function buildRoom(t: Theme, decoSeed: number): void {
   flame = add(new Mesh(geo(new ConeGeometry(0.06, 0.2, seg(10))), own(new MeshBasicMaterial({ color: new Color(0xffc65c).multiplyScalar(detailed ? 6 : 1) }))), 5.4, 4.36, -3.6, false, false);
   if (detailed && look && look.budget.candleLight) {
     // candle glow that flickers with the flame (an extra light in every lit shader: High/Ultra only)
-    candleLight = new PointLight(0xffb45a, L(4), 5, 2);
+    candleLight = new PointLight(0xffb45a, 4, 5, 2);
     candleLight.position.set(5.4, 4.5, -3.3);
     root.add(candleLight);
   }
@@ -543,6 +545,23 @@ function rebuild(): void {
   focusIndex = focus;
 }
 
+/** The browser build's fitShadow: the key light's ortho box tight around the room's bounds. */
+function fitShadow(light: DirectionalLight, min: Vector3, max: Vector3): void {
+  const pos = light.position, f = new Vector3().subVectors(light.target.position, pos).normalize();
+  const rt = new Vector3().crossVectors(f, new Vector3(0, 1, 0)).normalize();
+  const up = new Vector3().crossVectors(rt, f);
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity], p = new Vector3();
+  for (let i = 0; i < 8; i++) {
+    p.set(i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z).sub(pos);
+    const v = [p.dot(rt), p.dot(up), -p.dot(f)];
+    for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k]!, v[k]!); hi[k] = Math.max(hi[k]!, v[k]!); }
+  }
+  Object.assign(light.shadow.camera, {
+    left: lo[0]! - 0.2, right: hi[0]! + 0.2, bottom: lo[1]! - 0.2, top: hi[1]! + 0.2, near: Math.max(0.1, -hi[2]! - 0.5), far: -lo[2]! + 0.5,
+  });
+  light.shadow.camera.updateProjectionMatrix();
+}
+
 // ---- look -----------------------------------------------------------------------------------------
 function applyShadows(): void {
   const on = !!look && look.shadows > 0;
@@ -651,6 +670,7 @@ export function setRect(x: number, y: number, w: number, h: number, W: number, H
   if (view.x === x && view.y === y && view.w === w && view.h === h && view.W === W && view.H === H) return;
   Object.assign(view, { x, y, w, h, W, H });
   if (particles) particles.material.size = moteSize();
+  camera.aspect = w / h;
   camera.setViewOffset(w, h, -x, -y, W, H);
   camera.updateProjectionMatrix();
   // Narrow playfields: the home distance grows so the whole room width fits
@@ -704,7 +724,7 @@ export function update(dtIn: number): void {
   if (!reduced) {
     if (flame) flame.scale.set(1 + Math.sin(t * 11) * 0.15, 1 + Math.sin(t * 13.7) * 0.25, 1);
     if (pendulum) pendulum.rotation.z = Math.sin(t * 2.2) * 0.35;
-    if (candleLight) candleLight.intensity = L(4 + Math.sin(t * 11) * 0.6 + Math.sin(t * 23.3) * 0.4);
+    if (candleLight) candleLight.intensity = 4 + Math.sin(t * 11) * 0.6 + Math.sin(t * 23.3) * 0.4;
     if (particles && moteBase) {
       const p = particles.geometry.attributes.position as BufferAttribute;
       const arr = p.array as Float32Array;
