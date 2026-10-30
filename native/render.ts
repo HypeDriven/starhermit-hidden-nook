@@ -594,7 +594,7 @@ export function applyLook(next: Look): void {
   // The browser build's grade pass: a gentle S-curve (0.22), saturation 1.1, cool shadows /
   // warm highlights, the 0.24 vignette.
   renderer.grade = next.grade ? {
-    space: "display", contrast: 0.11, saturation: 1.1,
+    space: "display", contrastCurve: "s", contrast: 0.22, saturation: 1.1,
     shadows: [0.97, 0.99, 1.04], highlights: [1.04, 1.0, 0.95], split: [0.25, 0.8],
     vignette: { amount: 0.24, inner: 0.38, outer: 0.85 },
   } : null;
