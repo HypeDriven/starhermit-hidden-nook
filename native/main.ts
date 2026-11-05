@@ -18,7 +18,7 @@
 // count steps, so pauses, a hidden window and slow frames never change a
 // round and play scripts replay exactly.
 import "./classic.ts";
-import { clipboard, frame, onFixedUpdate, onPreferencesChange, onRender, onResume, onStart, onSuspend, onUpdate, preferences, setFixedRate } from "starhermit:engine";
+import { clipboard, frame, levelSettings, onFixedUpdate, onPreferencesChange, onRender, onResume, onStart, onSuspend, onUpdate, preferences, setFixedRate } from "starhermit:engine";
 import { onAction, onPointerButton, onPointerMove, onTouch, onWheel, pointer, vibrate } from "starhermit:input";
 import * as ui from "starhermit:ui";
 import { onPlayerChange, onSessionEnded, requestSignIn } from "starhermit:platform";
@@ -557,10 +557,10 @@ onTouch((e) => {
 let lookKey = "";
 function applyLook(): void {
   const f = frame();
-  const k = `${f.quality}:${f.levelIndex}`;
+  const k = f.level;
   if (k === lookKey) return;
   lookKey = k;
-  render.applyLook(lookFor(f.quality, f.levelIndex));
+  render.applyLook(lookFor(levelSettings(f.level)));
 }
 onStart(() => {
   setFixedRate(60);

@@ -12,8 +12,8 @@
 // shadows by the level), the theme-tinted hemisphere fill, the interior
 // lamp, the RoomEnvironment reflections; ACES tone mapping at 1.35, the fog
 // band, and the old post chain (ambient occlusion, bloom on HDR highlights
-// above 2.2, the colour grade with its vignette, FXAA/SMAA/MSAA) as renderer
-// settings.
+// above 2.2, the colour grade with its vignette, anti-aliasing) as renderer
+// settings, each on and sized by the graphics level.
 //
 // The browser build drew into a canvas between its rails: here the scene
 // fills the window and the camera's view offset puts the room's picture in
@@ -568,6 +568,7 @@ function applyShadows(): void {
   renderer.shadowMap.enabled = on;
   if (!keyLight || !look) return;
   keyLight.castShadow = on;
+  // The level's map size: at engine.minor ≥ 23 the engine keeps whatever the game sets.
   if (on) keyLight.shadow.mapSize = look.shadows;
   keyLight.shadow.radius = look.shadows === 1024 ? 2 : 3;
 }
@@ -583,14 +584,16 @@ export function applyLook(next: Look): void {
   const assets = (q: Look | null): string => (q ? [q.detailed, JSON.stringify(q.budget)].join("|") : "");
   const needRebuild = assets(look) !== assets(next);
   look = next;
-  renderer.ao = next.ao === "off" ? null : {
+  // The level's AO; full resolution is the engine's "high" (the old Ultra's wider denoise).
+  const ao = next.ao, full = !!ao && ao.resolution >= 1;
+  renderer.ao = ao && {
     blendIntensity: 0.85, radius: 0.6, distanceExponent: 1.4, thickness: 1.0, scale: 1.0,
-    samples: next.ao === "high" ? 16 : 8, resolution: next.budget.aoRes,
-    denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: next.ao === "high" ? 6 : 4, rings: 2, samples: next.ao === "high" ? 16 : 8 },
+    samples: ao.samples, resolution: ao.resolution,
+    denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: full ? 6 : 4, rings: 2, samples: ao.denoiseSamples },
   };
   // The threshold is on pre-tone-mapping HDR values (exposure 1.35): lit surfaces stay below it,
   // only the flames, the lantern, the window and hot specular glints bloom.
-  renderer.bloom = next.bloom ? { strength: 0.6, radius: 0.45, threshold: 2.2, resolution: next.budget.bloomRes } : null;
+  renderer.bloom = next.bloom === null ? null : { strength: 0.6, radius: 0.45, threshold: 2.2, resolution: next.bloom };
   // The browser build's grade pass: a gentle S-curve (0.22), saturation 1.1, cool shadows /
   // warm highlights, the 0.24 vignette.
   renderer.grade = next.grade ? {

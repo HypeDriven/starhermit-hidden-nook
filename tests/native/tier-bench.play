@@ -1,0 +1,57 @@
+# Graphics-tier bench (tools/engine-tier-bench.mjs): Journey stage 1 in play, measured while four
+# requested objects are found by keys (focus ring, found glow, the request strip), the candle, the motes
+# and the room around them; two objects stay unfound so the round keeps running.
+until 300 Hidden Nook
+frames 60
+click =Journey
+until 60 Stage 1
+frames 20
+click =Stage 1
+until 60 Begin
+frames 10
+click =Begin
+until 400 =Pause
+frames 120
+measure start
+# find striped lantern
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key Enter 1
+frames 10
+# find chipped bottle
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key Enter 1
+frames 10
+# find violet bell
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key Enter 1
+frames 10
+# find indigo seashell
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key ArrowRight 1
+frames 5
+key Enter 1
+frames 10
+frames 490
+measure stop

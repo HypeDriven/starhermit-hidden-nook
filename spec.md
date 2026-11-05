@@ -352,8 +352,11 @@ theme keeps the shelves legible. ACES filmic tone mapping at exposure 1.35, sRGB
 band from 22 to 46 units that lets the room's edges fall into the case.
 
 **Graphics.** The runtime's Options choose the graphics level (Auto by the device, or one of ten
-levels); the game maps the level's quality tier (`frame().quality`) onto the browser build's four
-presets (`native/quality.ts`) and its level index scales the dust motes within the tier (up to 4×).
+levels). The engine-owned effects (shadows and their map size, ambient occlusion, bloom, the
+grade, anti-aliasing) come from the level's own settings (`levelSettings()`, the table every
+StarHermit game reads); the game's art maps the level's quality tier onto the browser build's four
+presets (`native/quality.ts`), and the level's particle budget against the tier's anchor level
+scales the dust motes within the tier (up to 4×).
 On top of the base scene, per preset: image-based lighting from a `RoomEnvironment` PMREM as
 `scene.environment` (intensity 0.45; the hemisphere fill drops to 70 %); clear-coat
 `MeshPhysicalMaterial` (High/Ultra) on glazed kinds (mug, teapot, bottle, shell, button, jar, book),
@@ -366,6 +369,8 @@ post effects are the renderer's: ambient occlusion (`renderer.ao`, GTAO), bloom 
 the lantern, the window, hot glints), the colour grade (gentle S-curve, +10 % saturation, warm
 highlights / cool shadows, soft vignette) and FXAA / SMAA / MSAA.
 
+At each tier's anchor level (quantum, molecular, terrestrial, galactic):
+
 | Preset (tier) | Shadows | AO | Bloom | Grade | AA | Reflections | Motes | Detail |
 |---|---|---|---|---|---|---|---|---|
 | Low | off | off | off | off | MSAA | off | ≤ 100 | plain |
@@ -375,8 +380,9 @@ highlights / cool shadows, soft vignette) and FXAA / SMAA / MSAA.
 
 Budgets: Lambert materials on Low, Standard on Balanced, Standard + clear-coat Physical on High/Ultra;
 wood/rug textures 64² / 128² / 256² / 512²; round-geometry segments ×0.5 / ×0.75 / ×1 / ×1.5; bloom and
-AO at half resolution below Ultra. The runtime holds shadow-map size and MSAA samples to the level and
-owns render scale, the pixel-ratio cap, adaptive resolution, the frame-rate limit and the frame-rate
+AO at half resolution below Ultra (the level's sizes; higher levels within a tier get more, e.g.
+stellar's 4096 shadows and full-resolution AO 16). Low keeps MSAA while engine 1.36.1's anti-aliasing
+"off" recolours the fog (the level asks for none). The runtime owns render scale, the pixel-ratio cap, adaptive resolution, the frame-rate limit and the frame-rate
 readout. A level change applies at once (the room is rebuilt keeping found/hinted objects and the
 camera when the budget changes). The old per-category overrides are not offered.
 
