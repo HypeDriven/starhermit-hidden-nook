@@ -13,31 +13,19 @@
 // rendered once into a clip (createClip), its loop ends cross-faded. The
 // oscillator voices the browser build played while a clip was still loading
 // are not ported (the engine's web runtime drops clip loads while a
-// synthesis graph runs): until its clip is in, an event is silent. Clips load
-// once the mixer runs (natively at once, in a browser after the first press),
-// one at a time.
+// synthesis graph runs): until its clip is in, an event is silent. Every clip
+// loads at once in onStart; the room tone still waits for the mixer to run
+// (in a browser, after the first press).
 import { files } from "starhermit:engine";
 import { context, createClip, loadClip, play as playClip, type AudioClip, type Bus, type Sound } from "starhermit:audio";
 import { Rules as R } from "./classic.ts";
 
 const GAIN = { music: 0.6 * 0.5, effects: 0.8, ambience: 0.5 * 0.25 };
 const MUSIC = new Set(["win", "lose", "achieve"]);
-// The game's first sounds load first.
-const FIRST = ["click", "found", "invalid", "focus", "hint", "countdown", "wave"];
 
 const eventFiles = new Map<string, string[]>();
 const clips = new Map<string, AudioClip>();
-const queue: string[] = [];
-let loading = false;
-let wantClips = false;
-function load(name: string): void { if (!queue.includes(name) && !clips.has(name)) queue.push(name); }
-function pump(): void {
-  if (loading || !queue.length) return;
-  const name = queue.shift()!;
-  loading = true;
-  loadClip(`sfx/${name}.opus`).then((c) => { clips.set(name, c); loading = false; }, (e: unknown) => { console.warn(`sfx ${name}: ${String(e)}`); loading = false; });
-}
-/** Reads the manifest and asks for the clips; they load once the mixer runs (see update). */
+/** Reads the manifest and loads every clip at once (onStart); an event whose clip is still loading is silent. */
 export function loadSfx(): void {
   try {
     const list = files.readJson("sfx/manifest.json") as unknown as { name?: string; event?: string }[];
@@ -48,7 +36,9 @@ export function loadSfx(): void {
       eventFiles.set(e.event, l);
     }
   } catch (e) { console.warn(`sfx manifest: ${String(e)}`); }
-  wantClips = true;
+  for (const name of new Set([...eventFiles.values()].flat())) {
+    loadClip(`sfx/${name}.opus`).then((c) => { clips.set(name, c); }, (e: unknown) => console.warn(`sfx ${name}: ${String(e)}`));
+  }
 }
 
 /** Plays a logical event's clip (a seeded choice among its variants); silent while it loads. */
@@ -62,7 +52,7 @@ export function play(event: string, variantSeed = 1): void {
   const name = ready[Math.floor(rng() * ready.length)]!;
   const bus: Bus = event === "click" ? "interface" : MUSIC.has(event) ? "music" : "effects";
   try { playClip(clips.get(name)!, { bus, gain: MUSIC.has(event) ? GAIN.music : GAIN.effects }); }
-  catch { clips.delete(name); load(name); } // a clip the mixer lost: load it again
+  catch { /* the mixer is full this frame: skip it */ }
 }
 
 // -- the room tone --------------------------------------------------------------------------
@@ -94,16 +84,9 @@ function roomToneClip(): AudioClip {
 let tone: AudioClip | null = null;
 let toneSound: Sound | null = null;
 
-/** Each frame: the clips once the mixer runs, then the room tone (rendered on a frame of its own) and its loop. */
+/** Each frame: once the mixer runs, the room tone (rendered on a frame of its own) and its loop. */
 export function update(): void {
   if (context.state !== "running") return;
-  if (wantClips) {
-    wantClips = false;
-    for (const e of FIRST) for (const n of eventFiles.get(e) ?? []) load(n);
-    for (const l of eventFiles.values()) for (const n of l) load(n);
-  }
-  pump();
-  if (loading || queue.length) return;
   if (!tone) { try { tone = roomToneClip(); } catch (e) { console.warn(`audio: ${String(e)}`); } return; }
   if (!toneSound) {
     try { toneSound = playClip(tone, { bus: "effects", gain: 0.0001, loop: true }); toneSound.fade(GAIN.ambience, 1.5); }

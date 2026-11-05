@@ -68,19 +68,9 @@ function button(b: Btn, width: number | null = null): void {
 }
 /** Buttons at their own widths in rows that wrap at `width` (CSS flex-wrap). */
 function flow(label: string, list: Btn[], width: number, gap = 9): void {
-  const rows: Btn[][] = [[]];
-  let used = 0;
-  for (const b of list) {
-    const bw = Math.min(width, b.width ?? textWidth(b.text, b.style ?? PLAIN, "button") + 2);
-    if (rows[rows.length - 1]!.length && used + gap + bw > width) { rows.push([]); used = 0; }
-    used += (rows[rows.length - 1]!.length ? gap : 0) + bw;
-    rows[rows.length - 1]!.push(b);
-  }
-  ui.column(label, () => {
-    rows.forEach((row, ri) => ui.row(`${label}-r${ri}`, () => {
-      for (const b of row) button(b, b.width ?? (textWidth(b.text, b.style ?? PLAIN, "button") + 2 > width ? width : null));
-    }, { spacing: gap, align: "center" }));
-  }, { spacing: gap, width });
+  ui.row(label, () => {
+    for (const b of list) button(b, b.width ?? (textWidth(b.text, b.style ?? PLAIN, "button") + 2 > width ? width : null));
+  }, { wrap: true, width, gap, align: "center" });
 }
 /** Text up to `width` wide: one label when it fits, else a paragraph. */
 function para(text: string, width: number, cls = "body", id?: string): void {
@@ -96,18 +86,10 @@ function heading(cls: string, text: string, width: number, id?: string): void {
 }
 /** Small labelled pills (badges) wrapping at `width`. */
 function badges(id: string, list: { text: string; on: boolean; tip?: string }[], width: number): void {
-  const rows: (typeof list)[] = [[]];
-  let used = 0;
-  for (const it of list) {
-    const iw = textWidth(it.text, "badge-text") + 20;
-    if (rows[rows.length - 1]!.length && used + 6 + iw > width) { rows.push([]); used = 0; }
-    used += (rows[rows.length - 1]!.length ? 6 : 0) + iw;
-    rows[rows.length - 1]!.push(it);
-  }
-  ui.column(id, () => rows.forEach((row, ri) => ui.row(`${id}-r${ri}`, () => {
-    row.forEach((it, i) => ui.column(`${id}-${ri}-${i}`, () => ui.style("badge-text", it.on && { text: { color: COLORS.accent } }).label(it.text),
+  ui.row(id, () => {
+    list.forEach((it, i) => ui.column(`${id}-${i}`, () => ui.style("badge-text", it.on && { text: { color: COLORS.accent } }).label(it.text),
       { style: it.on ? "badge-unlocked" : "badge", ...(it.tip ? { tooltip: it.tip } : {}) }));
-  }, { spacing: 6 })), { spacing: 6 });
+  }, { wrap: true, width, gap: 6 });
 }
 
 // ------------------------------------------------------------------ the frame
@@ -146,8 +128,7 @@ function topBar(L: Layout): number {
         const st = statusText();
         if (st) {
           // clamped to two lines on phones
-          const lines = ui.measureText(st, { style: "status-line", width: titleW }).height / L.sc;
-          if (L.portrait && lines > 36) para(st.slice(0, Math.max(10, Math.floor(st.length * 36 / lines) - 2)) + "…", titleW, "status-line", "status-line");
+          if (L.portrait && textWidth(st, "status-line") > titleW) ui.style("status-line", { text: { overflow: "ellipsis", maxLines: 2 } }).id("status-line").paragraph(st, titleW);
           else para(st, titleW, "status-line", "status-line");
         }
         if (platform.signedIn()) {
