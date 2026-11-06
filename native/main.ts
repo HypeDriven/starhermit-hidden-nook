@@ -48,14 +48,13 @@ export const app = {
   openedFrame: 0,
   focusNext: null as string | null,
   status: null as [string, Vars | undefined] | null,
-  toast: null as { text: () => string; until: number } | null,
   countdownText: "",
   pauseNote: false,
   practiceDiff: 1,
   practiceSeed: String(Math.floor(Math.random() * 1e9)),
   setupError: "",
   results: null as Results | null,
-  lb: null as { state: "lbPosting" | "lbRank" | "lbPosted" | "lbNotPosted"; rank?: number | null } | null,
+  lb: null as { state: "leaderboardPosting" | "leaderboardRank" | "leaderboardPosted" | "leaderboardNotPosted"; rank?: number | null } | null,
   board: null as { rows: { rank: string; name: string; score: number; you: boolean }[]; note: string; who: string; loading: boolean } | null,
   objectsOpen: false,
   signedOut: false,
@@ -92,9 +91,11 @@ export const ACHIEVEMENTS: Record<string, { name: string; desc: string }> = {
 export function announce(text: string, assertive = false): void {
   if (text) ui.announce(text.slice(0, 500), { politeness: assertive ? "assertive" : "polite" });
 }
-export function toast(text: () => string): void {
-  app.toast = { text, until: now() + 3.5 };
-  announce(text());
+let lastToast: ReturnType<NonNullable<typeof ui.toast>> = null;
+/** One at a time, 3.5 s at the bottom. */
+export function toast(text: string): void {
+  lastToast?.dismiss();
+  lastToast = ui.toast!(text, { duration: 3.5, style: "toast", dismissible: false });
 }
 /** The status line: a translation key (+ vars) so it follows language changes. */
 export function setStatus(key: string | null, vars?: Vars): void { app.status = key ? [key, vars] : null; }
@@ -365,11 +366,11 @@ function toResults(): void {
   // StarHermit high-score board; the results show the player's rank.
   app.lb = null;
   if (platform.signedIn() && (mode === "journey" || mode === "daily")) {
-    const line = { state: "lbPosting" as const };
+    const line = { state: "leaderboardPosting" as const };
     app.lb = line;
     void platform.postLeaderboard(bd.total).then((r) => {
       if (app.lb !== line) return;
-      app.lb = { state: !r.posted ? "lbNotPosted" : r.rank ? "lbRank" : "lbPosted", rank: r.rank };
+      app.lb = { state: !r.posted ? "leaderboardNotPosted" : r.rank ? "leaderboardRank" : "leaderboardPosted", rank: r.rank };
     });
   }
 }
@@ -462,7 +463,7 @@ export function copyInvite(): void {
   const link = platform.inviteLink();
   let ok = false;
   if (link) { try { clipboard.writeText(link); ok = true; } catch { ok = false; } }
-  toast(() => (ok ? pt("copied") : pt("copyFailed", { link: link ?? "" })));
+  toast(ok ? pt("inviteCopied") : pt("inviteLink", { link: link ?? "" }));
 }
 export function signIn(): void { void requestSignIn().catch(() => undefined); }
 
@@ -576,7 +577,7 @@ onPreferencesChange((p) => render.setReducedMotion(p.reducedMotion));
 onLocaleChange(() => { if (app.screen === "scores" && app.board && !app.board.loading) showScores(); });
 onSessionEnded(() => {
   app.signedOut = true;
-  toast(() => pt("signedOut"));
+  toast(pt("signedOut"));
   setStatus("Offline mode — progress is stored locally");
 });
 onPlayerChange((p) => {
@@ -613,7 +614,6 @@ onUpdate((dt) => {
   frameDt = dt;
   applyLook();
   audio.update();
-  if (app.toast && now() > app.toast.until) app.toast = null;
 });
 onRender(() => {
   drawScreens();

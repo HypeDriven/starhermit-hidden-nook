@@ -1,45 +1,15 @@
-/* Hidden Nook — localization runtime (classic script, global HNI18N).
- *
- * Nine locales: en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT.
- * English source strings are the keys; js/strings.js holds the tables (en-GB,
- * es-ES and fr-CA carry only their differences from en-US, es-419 and fr-FR)
- * plus the object vocabulary (nouns with gender, adjective forms) used to name
- * the scene's objects in each language's word order. The engine client
- * (native/i18n.ts) picks the locale from the runtime's interface language and
- * calls setLocale; every string drawn is looked up each frame, so a change
- * shows at once. Loaded with loadClassic natively and through vm in the Node
- * tests.
+/* Hidden Nook — object names in each language's word order (classic script,
+ * global HNI18N): js/names.js holds the vocabulary (nouns with gender, adjective
+ * forms). The string tables are the engine's (assets/strings.json); the engine
+ * client (native/i18n.ts) calls setLocale with the locale they are in. Loaded with
+ * loadClassic natively and through vm in the Node tests.
  */
 (function (root) {
   'use strict';
 
   var LOCALES = ['en-US', 'en-GB', 'es-419', 'es-ES', 'de-DE', 'fr-FR', 'fr-CA', 'pt-BR', 'it-IT'];
   var PARENT = { 'en-GB': 'en-US', 'es-ES': 'es-419', 'fr-CA': 'fr-FR' };
-  var hasOwn = Object.prototype.hasOwnProperty;
   var lang = 'en-US';
-
-  function lookup(key) {
-    var tables = root.HN_STRINGS || {};
-    for (var l = lang; l; l = PARENT[l]) {
-      var t = tables[l];
-      if (t && hasOwn.call(t, key)) return t[key];
-    }
-    return key;
-  }
-  // Var values: '@obj:<English object name>', '@kind:<kind>' and '@t:<key>' render translated.
-  function value(v) {
-    var s = String(v);
-    if (s.indexOf('@obj:') === 0) return objectName(s.slice(5));
-    if (s.indexOf('@kind:') === 0) return kindName(s.slice(6));
-    if (s.indexOf('@t:') === 0) return T(s.slice(3));
-    return s;
-  }
-  /** Translate an English source string; {name} placeholders come from vars. */
-  function T(key, vars) {
-    var s = lookup(String(key));
-    if (vars) s = s.replace(/\{(\w+)\}/g, function (m, k) { return hasOwn.call(vars, k) ? value(vars[k]) : m; });
-    return s;
-  }
 
   // ---- object names: "<adjective> <noun>" in each language's word order ----
   function vocab() {
@@ -80,10 +50,9 @@
   }
 
   root.HNI18N = {
-    T: T, objectName: objectName, kindName: kindName, setLocale: setLocale,
+    objectName: objectName, kindName: kindName, setLocale: setLocale,
     get lang() { return lang; },
     locales: LOCALES,
-    get tables() { return root.HN_STRINGS || {}; },
     get names() { return root.HN_NAMES || {}; }
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

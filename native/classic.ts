@@ -6,7 +6,7 @@
 // this module's exports.
 import { loadClassic } from "starhermit:script";
 
-for (const f of ["js/rules.js", "js/content.js", "js/progress.js", "js/strings.js", "js/i18n.js", "js/platform-strings.js"]) loadClassic(f);
+for (const f of ["js/rules.js", "js/content.js", "js/progress.js", "js/names.js", "js/i18n.js"]) loadClassic(f);
 
 // -- The shapes this client reads -------------------------------------------------
 export interface Item {
@@ -68,23 +68,17 @@ interface ProgressApi {
   sameProgress(a: Doc, b: Doc): boolean;
 }
 interface I18nApi {
-  T(key: string, vars?: Record<string, string | number> | null): string;
   objectName(english: string): string;
   kindName(kind: string): string;
   setLocale(tag: string): string;
   readonly lang: string;
   locales: string[];
 }
-interface PlatformStringsApi {
-  platformStrings(lang: string): Record<string, string>;
-  fmtPlatform(s: string, vars?: Record<string, string | number>): string;
-}
 
 const g = globalThis as unknown as {
-  HNRules: RulesApi; HNContent: ContentApi; HNProgress: ProgressApi; HNI18N: I18nApi; PlatformStrings: PlatformStringsApi;
+  HNRules: RulesApi; HNContent: ContentApi; HNProgress: ProgressApi; HNI18N: I18nApi;
 };
 export const Rules = g.HNRules;
 export const Content = g.HNContent;
 export const Progress = g.HNProgress;
 export const I18n = g.HNI18N;
-export const PlatformStrings = g.PlatformStrings;

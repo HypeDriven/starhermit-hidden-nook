@@ -38,7 +38,7 @@ candle burns down.
 | `js/rules.js` | Pure deterministic rules engine (UMD: `HNRules` global / `require`). Owns every state transition. |
 | `js/content.js` | Versioned content (UMD: `HNContent`): object vocabulary, themes, anchors, procedural levels, the lesson script, validators. |
 | `js/progress.js` | The progress document (UMD: `HNProgress`): fresh, checksum, sanitize, the browser build's save, the two-device merge. |
-| `js/strings.js`, `js/i18n.js`, `js/platform-strings.js` | Translation tables and object vocabulary (`HN_STRINGS`, `HN_NAMES`), the lookup runtime (`HNI18N`: `T`, `objectName`, `kindName`, `setLocale`), and the account lines in nine locales. |
+| `assets/strings.json`, `js/names.js`, `js/i18n.js` | Translation tables (engine `strings`; account lines are the engine's `starhermit.*`), the object vocabulary (`HN_NAMES`) and the object-name composer (`HNI18N`) |
 | `assets/ui-style.json` | The UI styles, converted from `tools/ui-style.css` by `npm run css` (`starhermit css`). |
 | `score-script.js` | StarHermit platform script (`server=`): range-checks a finished round's total and posts it to the `high-score` board. |
 | `server.js` | Local dev server (static files plus a legacy REST surface used by `test.js`); not part of the package. |
@@ -373,7 +373,7 @@ At each tier's anchor level (quantum, molecular, terrestrial, galactic):
 
 | Preset (tier) | Shadows | AO | Bloom | Grade | AA | Reflections | Motes | Detail |
 |---|---|---|---|---|---|---|---|---|
-| Low | off | off | off | off | MSAA | off | ≤ 100 | plain |
+| Low | off | off | off | off | off | off | ≤ 100 | plain |
 | Balanced | 1024 | off | on | on | FXAA | on | 350+ | detailed |
 | High | 2048 | on | on | on | SMAA | on | 700+ | detailed |
 | Ultra | 4096 | high | on | on | MSAA | on | 1000+ | detailed |
@@ -381,8 +381,7 @@ At each tier's anchor level (quantum, molecular, terrestrial, galactic):
 Budgets: Lambert materials on Low, Standard on Balanced, Standard + clear-coat Physical on High/Ultra;
 wood/rug textures 64² / 128² / 256² / 512²; round-geometry segments ×0.5 / ×0.75 / ×1 / ×1.5; bloom and
 AO at half resolution below Ultra (the level's sizes; higher levels within a tier get more, e.g.
-stellar's 4096 shadows and full-resolution AO 16). Low keeps MSAA while engine 1.38.0's anti-aliasing
-"off" recolours the fog (the level asks for none). The runtime owns render scale, the pixel-ratio cap, adaptive resolution, the frame-rate limit and the frame-rate
+stellar's 4096 shadows and full-resolution AO 16). The runtime owns render scale, the pixel-ratio cap, adaptive resolution, the frame-rate limit and the frame-rate
 readout. A level change applies at once (the room is rebuilt keeping found/hinted objects and the
 camera when the budget changes). The old per-category overrides are not offered.
 
@@ -418,8 +417,8 @@ cue and the room tone on `effects` (0.8; the room tone 0.125), the menu tap on `
 default bus levels folded into each sound's gain. Volumes, mute and the voice limit are the
 runtime's Options. In browsers sound starts after the first press.
 
-**Ambience.** A two-second seeded white-noise buffer (`mulberry32(0xa1b1)`) through a 320 Hz lowpass,
-rendered once into a clip with cross-faded loop ends — a room tone, identical every session.
+**Ambience.** A two-second seeded white-noise loop through a 320 Hz lowpass,
+rendered once offline (`OfflineAudioContext`) into a seamless clip — a room tone, identical every session.
 
 **Music.** There is no score. The win and lose stings and the achievement triad are the music bus.
 
@@ -460,12 +459,12 @@ Nine locales ship: **en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it
 string — the top bar and rails, the dialogs (title, modes, journey, practice, challenge, round
 setup, countdown, pause, settings, help, results, progress, score chase), the status line,
 announcements and errors, achievements, lesson prompts and theme names — is an English key in
-`js/strings.js` with es-419, de-DE, fr-FR, pt-BR and it-IT translations; en-GB, es-ES and fr-CA carry
-only their differences. The account lines (`js/platform-strings.js`) have their own nine-locale
-table and follow the same language.
+`assets/strings.json` with es-419, de-DE, fr-FR, pt-BR and it-IT translations; en-GB, es-ES and fr-CA carry
+only their differences. The account lines are the engine's `starhermit.*` strings
+and follow the same language.
 
 - **Object names are composed, not concatenated.** The rules keep the English "<adjective> <noun>"
-  name (it is part of replays and validation); `strings.js` (`HN_NAMES`) holds each language's
+  name (it is part of replays and validation); `js/names.js` (`HN_NAMES`) holds each language's
   vocabulary — 20 nouns with grammatical gender, 20 adjectives with their gendered forms — and the
   word order: noun-first with agreement for Spanish, French, Portuguese and Italian ("taza de latón",
   "bougie cramoisie"), a strong-declined adjective first for German ("messingfarbener Becher",
@@ -514,7 +513,7 @@ The game is a StarHermit engine script game (`starhermit.txt`: `engine.api=1`,
 | Cloud save | The progress document is the game's save (`saves`), on the device and in the account's slot, uploads debounced by the runtime. A conflict with another device merges: furthest journey stage, better best per level (`R.compareResults`), union of achievements (earliest unlock), larger all-time found count, the newer daily streak, lesson done if done anywhere. The browser build's cloud save (the JS SDK's zipped `save.json` in `game:<slug>`) shows as foreign: it is read when its checksum is intact, merged with the device's progress and saved over it once with `replaceForeign`. Guests' old browser `localStorage` progress cannot migrate. |
 | Settings | Haptics is the game's own setting (`settings`, synced with the account). The browser build's per-player settings keys (volumes, accessibility, graphics, camera, language, sound options) are read once — haptics carries over — and removed; the runtime's Options own the rest. The dead "Left-handed controls" toggle (it changed nothing) is gone. |
 | Invite | **Invite a friend** on the title (signed in) copies the platform's invite link (`clipboard`) and confirms with a toast. |
-| Leaderboards | Signed in, every finished Journey or Daily round posts its total through `score-script.js` (a practice session's socket carries `{ type: 'result', scores: { 'high-score': total } }`; the script range-checks it, 0–100,000, and writes the board); the results show "Posting score to the leaderboard…", then "Leaderboard rank: #N" (or posted / not posted). Results come only from the server script. The Score chase shows the board's top 50 (names from profiles, the player's own row highlighted; the board id is kept on the device so guests can read it), else personal bests saved with progress. |
+| Leaderboards | Signed in, every finished Journey or Daily round posts its total through `leaderboards.submitScore` (`score-script.js` range-checks it); the results show "Posting score to the leaderboard…", then "Leaderboard rank: #N" (or posted / not posted). Results come only from the server script. The Score chase shows the board's top 50 (names from profiles, the player's own row highlighted; the board id is kept on the device so guests can read it), else personal bests saved with progress. |
 | Time | The daily's UTC day comes from the platform's clock (`serverNow()`) once it answered, else the device's. |
 | Achievements | Local: unlock times inside the progress document, travelling with the cloud save. |
 

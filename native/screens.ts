@@ -32,13 +32,12 @@ import { COLORS } from "./style.ts";
 // ------------------------------------------------------------------ layout
 interface Layout { lw: number; lh: number; sc: number; ox: number; oy: number; portrait: boolean; shortLand: boolean; compact: boolean }
 function layoutNow(): Layout {
-  const f = frame();
-  const sc = ui.preferences().scale;
-  const sa = f.safeArea;
-  const lw = Math.max(1, (f.width - sa.left - sa.right) / sc), lh = Math.max(1, (f.height - sa.top - sa.bottom) / sc);
+  const v = ui.viewport!();
+  const sc = v.scale;
+  const lw = Math.max(1, v.width), lh = Math.max(1, v.height);
   const shortLand = lw > lh && lh <= 500;
   const portrait = !shortLand && lw <= 700 && lh >= lw;
-  return { lw, lh, sc, ox: sa.left / sc, oy: sa.top / sc, portrait, shortLand, compact: !shortLand && !portrait && lw < 1024 && lh > lw * 0.75 };
+  return { lw, lh, sc, ox: v.x, oy: v.y, portrait, shortLand, compact: !shortLand && !portrait && lw < 1024 && lh > lw * 0.75 };
 }
 const lastHeight = new Map<string, number>();
 type Cls = string | ui.Style;
@@ -98,7 +97,6 @@ export function drawScreens(): void {
   const f = frame();
   shell(L);
   dialogs(L);
-  toastView(L);
   if (app.focusNext) {
     const age = f.frame - app.openedFrame;
     if (age >= 1) ui.setFocus(app.focusNext);
@@ -590,7 +588,7 @@ function resultsDialog(L: Layout): void {
     }, { width: w, spacing: 0 });
     para(tr("Time {time} · seed {seed} · {n} left unfound", { time: fmtTime(r.elapsedMs), seed: r.seed.toString(36), n: bd.remaining }), w, "note", "results-sub");
     if (r.mode === "daily") para(tr("Daily score saved to your progress."), w);
-    if (app.lb) para(app.lb.state === "lbRank" ? pt("lbRank", { rank: app.lb.rank ?? "" }) : pt(app.lb.state), w, "body", "results-lb");
+    if (app.lb) para(app.lb.state === "leaderboardRank" ? pt("leaderboardRank", { rank: app.lb.rank ?? "" }) : pt(app.lb.state), w, "body", "results-lb");
     if (r.newAch.length) {
       para(tr("Achievement unlocked:"), w);
       badges("results-ach", r.newAch.map((n) => ({ text: "✓ " + tr(n), on: true })), w);
@@ -633,14 +631,4 @@ function scoresDialog(L: Layout): void {
 }
 
 // ------------------------------------------------------------------ the toast
-function toastView(L: Layout): void {
-  const t = app.toast;
-  if (!t) return;
-  const w = Math.min(L.lw - 32, 520);
-  const text = t.text();
-  ui.place("toast", { anchor: "bottom", y: 16 }, () => {
-    if (textWidth(text, "toast") + 34 <= w) ui.style("toast").id("toast").label(text);
-    else ui.style("toast").id("toast").paragraph(text, w - 34);
-  }, { align: "center", width: w });
-}
 

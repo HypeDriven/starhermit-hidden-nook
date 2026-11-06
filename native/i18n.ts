@@ -1,48 +1,42 @@
-// Localization: the browser build's string tables (js/strings.js through
-// js/i18n.js, the nine StarHermit locales, English text as the key, object
-// names composed in each language's word order) in the interface language
-// the runtime reports (preferences().language: the player's choice in
-// Options › Language, else the account's preferred language or the
-// device's). The runtime's Options replaced the game's own Language setting
-// (sh-language.js). The account lines are js/platform-strings.js's tables.
-import { onPreferencesChange, preferences } from "starhermit:engine";
+// Localization: the engine's string tables (assets/strings.json, generated from
+// the browser build's tables: nine locales, English text as the key) in the
+// interface language the runtime reports (the player's choice in Options ›
+// Language, else the account's preferred language or the device's). The
+// runtime's Options replaced the game's own Language setting (sh-language.js).
+// Object names are composed in each language's word order (js/i18n.js,
+// js/names.js). The account lines are the engine's `starhermit.*` keys.
+import { strings } from "starhermit:engine";
 import * as ui from "starhermit:ui";
-import { I18n, PlatformStrings } from "./classic.ts";
+import { I18n } from "./classic.ts";
 
-const PRIMARY: Record<string, string> = { en: "en-US", es: "es-419", de: "de-DE", fr: "fr-FR", pt: "pt-BR", it: "it-IT" };
-
-/** The shipped locale nearest a BCP 47 tag (en-GB, es-ES and fr-CA by region). */
-export function pickLocale(tag: string): string {
-  const s = String(tag || "en-US");
-  const exact = I18n.locales.find((l) => l.toLowerCase() === s.toLowerCase());
-  if (exact) return exact;
-  const lang = s.split("-")[0]!.toLowerCase();
-  if (lang === "en" && /-(gb|uk|ie|au|nz|za|in)$/i.test(s)) return "en-GB";
-  if (lang === "es" && /-es$/i.test(s)) return "es-ES";
-  if (lang === "fr" && /-ca$/i.test(s)) return "fr-CA";
-  return PRIMARY[lang] ?? "en-US";
-}
-
-let locale = "";
-const listeners = new Set<() => void>();
-function apply(tag: string): void {
-  const next = pickLocale(tag);
-  if (next === locale) return;
-  locale = I18n.setLocale(next);
+strings.load("assets/strings.json");
+strings.defaultLocale = "en-US";
+function apply(locale: string): void {
+  I18n.setLocale(locale);
   ui.setLanguage(locale);
-  for (const fn of listeners) fn();
 }
-apply(preferences().language);
-onPreferencesChange((p) => apply(p.language));
+apply(strings.locale);
+strings.onChange(apply);
 
-export function currentLocale(): string { return locale; }
 /** fn() after the interface language changed. */
-export function onLocaleChange(fn: () => void): void { listeners.add(fn); }
+export function onLocaleChange(fn: () => void): void { strings.onChange(() => fn()); }
 
 export type Vars = Record<string, string | number>;
+/** Var values: '@obj:<English object name>', '@kind:<kind>' and '@t:<key>' render translated. */
+function value(v: string | number): string {
+  const s = String(v);
+  if (s.startsWith("@obj:")) return I18n.objectName(s.slice(5));
+  if (s.startsWith("@kind:")) return I18n.kindName(s.slice(6));
+  if (s.startsWith("@t:")) return tr(s.slice(3));
+  return s;
+}
 /** A game string by its English key in the player's language; `{name}` placeholders from vars
- * ('@obj:<name>', '@kind:<kind>' and '@t:<key>' values render translated). */
-export function tr(key: string, vars?: Vars | null): string { return I18n.T(key, vars ?? null); }
+ * ('@obj:', '@kind:' and '@t:' values render translated). Text with no entry passes through. */
+export function tr(key: string, vars?: Vars | null): string {
+  const filled = vars ? Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, value(v)])) : undefined;
+  if (strings.has(key)) return strings.t(key, filled);
+  return key.replace(/\{(\w+)\}/g, (m, k: string) => filled?.[k] ?? m);
+}
 /** Marks an English key translated with tr() where it is shown. */
 export const K = (s: string): string => s;
 /** A scene object's name ("brass mug") in the player's language. */
@@ -50,8 +44,6 @@ export function objName(english: string): string { return I18n.objectName(englis
 /** An object kind's noun (the shape tag). */
 export function kindName(kind: string): string { return I18n.kindName(kind); }
 
-export type PlatformKey = "signIn" | "invite" | "copied" | "copyFailed" | "signedOut" | "lbPosting" | "lbRank" | "lbPosted" | "lbNotPosted";
-/** An account line (js/platform-strings.js) in the player's language. */
-export function pt(key: PlatformKey, vars?: Vars): string {
-  return PlatformStrings.fmtPlatform(PlatformStrings.platformStrings(locale)[key] ?? key, vars);
-}
+export type PlatformKey = "signIn" | "invite" | "inviteCopied" | "inviteLink" | "signedOut" | "leaderboardPosting" | "leaderboardRank" | "leaderboardPosted" | "leaderboardNotPosted";
+/** An account line (the engine's `starhermit.*` strings) in the player's language. */
+export function pt(key: PlatformKey, vars?: Vars): string { return strings.t(`starhermit.${key}`, vars); }
