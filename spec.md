@@ -455,22 +455,23 @@ generated with MOSS-SoundEffect v2.0 at 100 inference steps.
 
 ## 10. Localization
 
-Nine locales ship: **en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT**. Every visible
-string — the top bar and rails, the dialogs (title, modes, journey, practice, challenge, round
-setup, countdown, pause, settings, help, results, progress, score chase), the status line,
-announcements and errors, achievements, lesson prompts and theme names — is an English key in
-`assets/strings.json` with es-419, de-DE, fr-FR, pt-BR and it-IT translations; en-GB, es-ES and fr-CA carry
-only their differences. The account lines are the engine's `starhermit.*` strings
-and follow the same language.
+Every language variant in `assets/strings.json` carries the complete interface: the top bar and
+rails, dialogs, status and announcements, errors, achievements, lesson prompts and theme names.
+The original English, Spanish, German, French, Portuguese and Italian dictionaries are preserved;
+regional variants reuse their corresponding language vocabulary. Account lines follow the same
+language through the engine's `starhermit.*` keys.
 
-- **Object names are composed, not concatenated.** The rules keep the English "<adjective> <noun>"
-  name (it is part of replays and validation); `js/names.js` (`HN_NAMES`) holds each language's
-  vocabulary — 20 nouns with grammatical gender, 20 adjectives with their gendered forms — and the
-  word order: noun-first with agreement for Spanish, French, Portuguese and Italian ("taza de latón",
-  "bougie cramoisie"), a strong-declined adjective first for German ("messingfarbener Becher",
-  "hölzernes Buch"). Every one of the 400 combinations is distinct in every locale (unit-tested).
-  The request chips, object list, objective line and announcements show the localized name; the
-  shape tag shows the localized noun.
+- **Object names:** the rules retain the English "<adjective> <noun>" identifier for replays and
+  validation. `js/names.js` (`HN_NAMES`) supplies localized nouns and descriptors to both the browser
+  and native client through the same `js/i18n.js` API. Reviewed gendered forms and word order are
+  applied where available (including Russian plural pocket watches and adjective-specific material
+  complements). Other new vocabularies use clear inventory labels, `noun (descriptor)`, so colours,
+  patterns and materials remain distinct without guessing agreement. All 20 nouns and 20 descriptors
+  are covered: every one of the 400 names is localized and distinct in every supported non-English
+  locale. Request chips, the object list, objectives and announcements use these names; shape tags
+  use the localized noun. `node ../tools/localization/sync-hidden-nook.mjs` regenerates the shared
+  classic data and `assets/localization-vocabulary.json` from the reviewed dictionaries; the latter
+  also contributes every glyph to the game's localized fonts.
 - **Language:** the runtime's Options › Language (the player's choice, else the account's preferred
   language, else the device's), mapped to the nearest shipped locale (`es-MX → es-419`,
   `pt-PT → pt-BR`, `en-AU → en-GB`). Every string is looked up each frame, so a change shows at once;
@@ -646,3 +647,15 @@ viewport; nothing clipped at 1280×800, 390×844 or 844×390 (dialogs scroll ins
 
 1. **Anchor de-collision at generation time** (a minimum separation pass in `C.generateLevel`), which
    would remove the overlap noted in §16.
+
+
+
+Long translated top-bar controls move below the title when they cannot fit beside it. Object names wrap within the accessible scene-object list instead of extending outside its rail.
+
+<!-- regional-localization:start -->
+
+### Regional interface languages
+
+The string tables include complete regional variants for `fr-BE`, `de-BE`, `en-SG`, `en-HK`, `en-BQ`, `es-CO`, `de-IT`, `fr-IT`, `es-CL`, `es-AR`, `es-EC`, `de-BR`. These reuse the corresponding existing translations in their language family. The runtime can resolve the exact regional tag. Language selection is available from the game’s Options panel or F2 and is saved per player in `ui.language`. Changes apply during play. Additional national, regional and indigenous language packs are only shipped once every English message has a translation with intact placeholders and markup. Complete additional language tables: `ja-JP`, `nl-BE`, `zh-SG`, `ms-SG`, `ta-SG`, `zh-HK`, `yue-HK`, `nl-NL`, `fi-FI`, `sv-FI`, `et-EE`, `id-ID`, `vi-VN`, `da-DE`, `lb-BE`, `co-FR`, `eu-FR`, `ca-FR`, `oc-FR`, `sl-IT`, `fur-IT`, `ca-IT`, `oc-IT`, `ca-ES`, `eu-ES`, `gl-ES`, `su-ID`, `bew-ID`, `km-VN`, `ru-FI`, `ru-EE`.
+
+<!-- regional-localization:end -->

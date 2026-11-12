@@ -1,0 +1,26 @@
+# viewport 390x844
+until 300 Hidden Nook
+frames 30
+click Play (starts with a quick lesson)
+until 60 Interactive lesson
+click =Begin
+until 400 =Pause
+frames 20
+expect 0 / 6
+key F2 2
+frames 30
+click ភាសាខ្មែរ (km-VN)
+frames 30
+click បិទ
+frames 20
+expect 0 / 6
+expect ចង្កៀងគោម (មានចំណុច)
+expect ស្លាបបក្សី (ច្រេះ)
+save hidden-nook-vocabulary-khmer-phone
+
+# A real touch on the visible lantern still works after closing the modal.
+touch 121 339
+frames 10
+expect 1 / 6
+expect 100
+save hidden-nook-vocabulary-khmer-scene-touch

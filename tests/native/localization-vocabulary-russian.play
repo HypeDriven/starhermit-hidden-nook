@@ -1,0 +1,25 @@
+# viewport 1280x800
+until 300 Hidden Nook
+frames 30
+click Play (starts with a quick lesson)
+until 60 Interactive lesson
+click =Begin
+until 400 =Pause
+frames 20
+expect 0 / 6
+key F2 2
+frames 30
+click Русский (ru-FI)
+frames 30
+click Закрыть
+frames 20
+expect 0 / 6
+expect деревянный чайник
+save hidden-nook-vocabulary-russian
+
+# A normal scene tap still finds the visible lantern after the modal closes.
+click 491 575
+frames 10
+expect 1 / 6
+expect 100
+save hidden-nook-vocabulary-russian-scene-tap

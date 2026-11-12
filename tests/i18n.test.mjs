@@ -37,11 +37,11 @@ test('every used key is translated in every locale; placeholders intact; nothing
 
 test('every object name (adjective + noun) is localized, uniquely, in every locale', () => {
   const I18N = boot();
-  const names = I18N.names;
-  for (const loc of LOCALES) {
-    if (loc === 'en-US' || loc === 'en-GB') continue;
+  for (const loc of new Set([...Object.keys(JSON.parse(read('assets/strings.json'))), ...Object.keys(I18N.names)])) {
+    if (loc.startsWith('en-')) continue;
     I18N.setLocale(loc);
-    const v = names[loc] || names[{ 'es-ES': 'es-419', 'fr-CA': 'fr-FR' }[loc]];
+    assert.equal(I18N.lang, loc, 'locale recognized: ' + loc);
+    const v = I18N.vocabulary;
     assert.ok(v, 'vocabulary for ' + loc);
     for (const d of C.OBJECT_DEFS) assert.ok(v.noun[d.label], `${loc} noun: ${d.label}`);
     for (const a of C.ADJECTIVES) assert.ok(v.adj[a], `${loc} adjective: ${a}`);
@@ -68,3 +68,17 @@ test('the locale switches as the engine client sets it, with the regional tables
   assert.equal(I18N.setLocale('xx-YY'), 'en-US');
 });
 
+
+test('reviewed vocabulary preserves plurality, material complements, and distinct inventory labels', () => {
+  const I18N = boot();
+  I18N.setLocale('ru-FI');
+  assert.equal(I18N.objectName('wooden pocket watch'), 'деревянные карманные часы');
+  I18N.setLocale('da-DE');
+  assert.equal(I18N.objectName('wooden book'), 'bog af træ');
+  I18N.setLocale('lb-BE');
+  assert.equal(I18N.objectName('crimson bottle'), 'Fläsch (Karminrout)');
+  assert.notEqual(I18N.kindName('bottle'), I18N.kindName('jar'));
+  I18N.setLocale('km-VN');
+  assert.equal(I18N.objectName('porcelain jar'), 'ក្រឡ (ធ្វើពីប៉សឺឡែន)');
+  assert.notEqual(I18N.objectName('porcelain jar'), I18N.objectName('ceramic jar'));
+});

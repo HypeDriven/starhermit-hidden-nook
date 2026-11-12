@@ -1,0 +1,43 @@
+# viewport 1280x800
+until 300 Hidden Nook
+frames 30
+click Play (starts with a quick lesson)
+until 60 Interactive lesson
+click =Begin
+until 400 =Pause
+frames 20
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key Enter 1
+frames 10
+save hidden-english-desktop
+key F2 2
+frames 20
+click தமிழ் (ta-SG)
+frames 50
+click மூடு
+frames 20
+expect இடைவெளி
+expect பாடம்
+save hidden-tamil-desktop
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key ArrowRight 1
+frames 3
+key Enter 1
+frames 10
+key KeyH 1
+frames 10
+save hidden-tamil-play-desktop

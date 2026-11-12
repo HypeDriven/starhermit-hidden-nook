@@ -1,3 +1,4 @@
+import { withLanguageRender as __l10nRender } from "./l10n/menu.ts";
 // Hidden Nook on the StarHermit engine: the entry module (starhermit.txt
 // engine.entry), played natively by the StarHermit client and in browsers by
 // the engine's web runtime. The rules, content, progress document and string
@@ -518,7 +519,8 @@ function release(x: number, y: number, touchId: number | null, cancel: boolean):
   const d = down;
   if (!d || d.touchId !== touchId) return;
   down = null;
-  if (cancel || d.moved || now() - d.at >= 0.4) return;
+  // A later overlay may have appeared after this scene press began.
+  if (cancel || d.moved || now() - d.at >= 0.4 || ui.pointerOver()) return;
   if (app.phase === "active" && !modalOpen()) tap(render.pick(x, y));
 }
 onPointerButton((e) => {
@@ -615,8 +617,12 @@ onUpdate((dt) => {
   applyLook();
   audio.update();
 });
-onRender(() => {
+onRender(__l10nRender(() => {
   drawScreens();
   decidePress();
   render.update(frameDt);
-});
+}));
+
+// localization-runtime:menu
+import { installLanguageMenu as __installLanguageMenu } from "./l10n/menu.ts";
+__installLanguageMenu(false);

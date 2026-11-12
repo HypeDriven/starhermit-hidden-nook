@@ -8,7 +8,10 @@
   'use strict';
 
   var LOCALES = ['en-US', 'en-GB', 'es-419', 'es-ES', 'de-DE', 'fr-FR', 'fr-CA', 'pt-BR', 'it-IT'];
-  var PARENT = { 'en-GB': 'en-US', 'es-ES': 'es-419', 'fr-CA': 'fr-FR' };
+  var PARENT = { 'en-GB': 'en-US', 'es-ES': 'es-419', 'fr-CA': 'fr-FR', 'en-SG': 'en-GB', 'en-HK': 'en-GB', 'en-BQ': 'en-GB', 'de-BE': 'de-DE', 'de-IT': 'de-DE', 'fr-BE': 'fr-FR', 'fr-IT': 'fr-FR', 'es-CO': 'es-419', 'es-CL': 'es-419', 'es-AR': 'es-419', 'es-EC': 'es-419' };
+  PARENT['nl-BE'] = 'nl-NL';
+  PARENT['de-BR'] = 'de-DE';
+  LOCALES = Array.from(new Set(LOCALES.concat(Object.keys(PARENT), Object.keys(root.HN_NAMES || {}))));
   var lang = 'en-US';
 
   // ---- object names: "<adjective> <noun>" in each language's word order ----
@@ -22,6 +25,7 @@
     var v = vocab();
     var name = String(english);
     if (!v) return name;
+    if (v.names && Object.prototype.hasOwnProperty.call(v.names, name)) return v.names[name];
     var adjs = Object.keys(v.adj).sort(function (a, b) { return b.length - a.length; });
     var adj = null;
     for (var i = 0; i < adjs.length; i++) if (name.indexOf(adjs[i] + ' ') === 0) { adj = adjs[i]; break; }
@@ -31,7 +35,10 @@
     var word = noun[0], gender = noun[1];
     var forms = v.adj[adj];
     var a = typeof forms === 'string' ? forms : (forms[gender] || forms.m);
-    return v.order === 'adj-noun' ? a + ' ' + word : word + ' ' + a;
+    var sep = v.separator === undefined ? ' ' : v.separator;
+    if (v.format === 'inventory-label') return word + ' (' + a + ')';
+    var order = typeof forms === 'object' && forms.order ? forms.order : v.order;
+    return order === 'adj-noun' ? a + sep + word : word + sep + a;
   }
   /** Localized object kind (the shape tag): the noun of the kind's label. */
   function kindName(kind) {
@@ -53,6 +60,7 @@
     objectName: objectName, kindName: kindName, setLocale: setLocale,
     get lang() { return lang; },
     locales: LOCALES,
-    get names() { return root.HN_NAMES || {}; }
+    get names() { return root.HN_NAMES || {}; },
+    get vocabulary() { return vocab(); }
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
