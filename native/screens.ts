@@ -1,3 +1,4 @@
+import { bindings } from "starhermit:input";
 import { localizedStyle as __l10nStyle } from "./l10n/font.ts";
 // localization-runtime:attached
 import { openLocalizedOptions as __l10nOptions } from "./l10n/menu.ts";
@@ -110,7 +111,7 @@ function badges(id: string, list: { text: string; on: boolean; tip?: string }[],
 }
 
 // ------------------------------------------------------------------ the frame
-export function drawScreens(): void {
+function drawScreensImmediate(): void {
   const L = layoutNow();
   const f = frame();
   shell(L);
@@ -664,3 +665,10 @@ function scoresDialog(L: Layout): void {
 
 // ------------------------------------------------------------------ the toast
 
+
+export function drawScreens(): void {
+  if (!(app.sub === "help")) { drawScreensImmediate(); return; }
+  const actions = ["pause","prev","next","select","hint","undo","reset_view"];
+  const version = JSON.stringify([(app as any).settings ?? (app as any).options ?? {}, (platform as any).options ?? {}, actions.map((action) => bindings(action))]);
+  ui.retain!("help-screen", version, drawScreensImmediate);
+}
