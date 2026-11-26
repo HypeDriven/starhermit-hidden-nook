@@ -45,7 +45,7 @@
     "native/render.ts": {"sha256": "10b21faf72552812d8e2fdd147d4f57ff6a8a30464a614979d72ceab861fae30", "size": 37367},
     "native/screens.ts": {"sha256": "5b86a9031d930a16565562264604e86b03168f4c23150e2c0313b3f4370daa2c", "size": 40419},
     "native/style.ts": {"sha256": "4b678912cbf52b92c647fd980a60844c15c8332493fc091d3bff2fde5b163b90", "size": 2716},
-    "publication.json": {"sha256": "43adb4b61f45a6e774be576cd8f9fc1159b571f06c87533c15f2dc4c8dfa4fb8", "size": 4291},
+    "publication.json": {"sha256": "4f600f0cbed5e9b148e2a24dc9d07eaa3de7517c2d6041f57aa490dc3062a116", "size": 4290},
     "score-script.js": {"sha256": "4133359e8234cac920651c89f79485aa401cdca970720662e50150de4431f600", "size": 2487},
     "sfx/achievement-unlock.opus": {"sha256": "4e9a0adc1b3932284fccc89c3536540f223fc37a97e36f11720df8b147723f48", "size": 26685},
     "sfx/countdown-tick.opus": {"sha256": "c3a287b79b60fc1ad98e5d47897749c2843d6aae08e793c108e77288cc7b85e0", "size": 12211},
