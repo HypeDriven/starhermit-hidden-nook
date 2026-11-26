@@ -12,7 +12,7 @@
     "metadataSource": "starhermit.txt",
     "createdAt": "2026-09-01T07:01:01.892098+00:00",
     "coverArtSource": "manifest",
-    "coverArtUpdatedAt": "2026-11-26T16:03:11.8796+00:00",
+    "coverArtUpdatedAt": "2026-11-26T20:45:31.295603+00:00",
     "submittedByUserId": "2712e04e-461b-4d23-81ae-e40b429128a8",
     "submittedByUsername": "starhermit",
     "hosting": {
@@ -22,9 +22,9 @@
       "pinnedCommitSha": null,
       "deployedCommitSha": null,
       "deployError": null,
-      "deployedAt": "2026-11-26T16:03:11.86513+00:00",
+      "deployedAt": "2026-11-26T20:45:31.285125+00:00",
       "externalLaunchUrl": null,
-      "engineVersion": "1.50.0",
+      "engineVersion": "1.51.0",
       "deployWarning": null
     },
     "description": "Search detailed miniature rooms for hidden objects before the candle timer burns down.",
@@ -36,19 +36,19 @@
     "links": [],
     "isDisabled": false
   },
-  "publishedAt": "2026-11-26T16:03:43.610Z",
-  "sourceCommit": "8d034b73e27e84f8416a368479d0f8379d835a4d",
-  "bytesReceived": 2588959,
-  "archiveSha256": "856dcdf373c16c97e8a462c85a9e4952a221bfcf0dfbe02c2ceecc093444a0fc",
+  "publishedAt": "2026-11-26T20:45:31.502Z",
+  "sourceCommit": "d49b00ee8070d9fcdb1b35721929e92fd4214439",
+  "bytesReceived": 2588934,
+  "archiveSha256": "1d7a6971e22730c238007abcbd29233718c9820294eedb509c42f00d1c50ea21",
   "indexSha256": "fcaaf6d35bc94f49bf995b4bc7f2bcc972295f178a35bd6407e7ded6ae6f8004",
   "result": {
     "clientPublished": true,
     "serverImageLoaded": false,
     "imageDigest": null,
-    "bytesReceived": 2588959,
+    "bytesReceived": 2588934,
     "mode": "replace",
     "filesRemoved": 0,
-    "engineVersion": "1.50.0",
+    "engineVersion": "1.51.0",
     "deployWarning": null
   },
   "liveVerification": {
